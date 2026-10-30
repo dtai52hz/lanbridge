@@ -29,6 +29,13 @@ public sealed class InputRouter : IDisposable
     public Action<bool>? RemoteControlChanged { get; set; }
     public Action? EmergencyReleased { get; set; }
     public string? LastError { get; private set; }
+    /// <summary>Payload-free timing counters; safe to read while the input owner or SendInput is blocked.</summary>
+    public InputDiagnosticsSnapshot GetDiagnosticsSnapshot()
+    {
+        int pendingOutgoing;
+        lock (_outboundLock) pendingOutgoing = _outbound.Count;
+        return _diagnostics.Snapshot(_started && _nativeInputEnabled, pendingOutgoing);
+    }
     public bool IsRemote => _remote;
     public bool IsController
     {
@@ -57,6 +64,7 @@ public sealed class InputRouter : IDisposable
     private SynchronizationContext? _context;
     private int _ownerThread;
     private readonly object _lifecycle = new();
+    private readonly InputDiagnostics _diagnostics = new();
     private Thread? _worker;
     private ApplicationContext? _application;
     private TaskCompletionSource? _startup;
@@ -80,7 +88,7 @@ public sealed class InputRouter : IDisposable
     private readonly HashSet<string> _receivedButtons = [];
     private readonly HashSet<string> _sentButtons = [];
     private readonly object _outboundLock = new();
-    private readonly LinkedList<(Packet Packet, Action<Packet> Sender)> _outbound = new();
+    private readonly LinkedList<(Packet Packet, Action<Packet> Sender, long QueuedAt)> _outbound = new();
     private bool _sending;
     private readonly PointerMovePacer _movePacer = new();
     private Action<Packet>? _pacedMoveSender;
@@ -89,7 +97,7 @@ public sealed class InputRouter : IDisposable
     private int _moveTickPosted;
     private static readonly double PointerMillisecondsPerTick = 1000d / Stopwatch.Frequency;
     private bool _emergencyChord;
-    private const uint InjectionTag = 0x4C424447; // "LBDG", also checked in addition to injected flags.
+    internal const uint InjectionTag = 0x4C424447; // "LBDG", also checked in addition to injected flags.
     private readonly record struct KeyStroke(int Key, int Scan, bool Extended);
 
     public InputRouter()
@@ -224,14 +232,14 @@ public sealed class InputRouter : IDisposable
     public void ApplyRemote(Packet packet)
     {
         ArgumentNullException.ThrowIfNull(packet);
-        OnOwner(() => ApplyPacketCore(packet));
+        OnOwner(() => ApplyPacketCore(packet), measureInputQueue: true);
     }
 
     /// <summary>Completes after the input thread applies this packet, preserving receiver order without waiting for the UI.</summary>
     public Task ApplyRemoteAsync(Packet packet, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(packet);
-        return OnOwnerAsync(() => ApplyPacketCore(packet), cancellationToken);
+        return OnOwnerAsync(() => ApplyPacketCore(packet), cancellationToken, measureInputQueue: true);
     }
 
     /// <summary>Applies a small ordered input batch with one dispatcher handoff, without waiting for the UI.</summary>
@@ -255,7 +263,7 @@ public sealed class InputRouter : IDisposable
                 // the rest of an already dequeued batch after that emergency release.
                 if (LastError is not null) break;
             }
-        }, cancellationToken);
+        }, cancellationToken, measureInputQueue: true);
     }
 
     private void ApplyPacketCore(Packet packet)
@@ -412,9 +420,11 @@ public sealed class InputRouter : IDisposable
     private IntPtr MouseHook(int code, IntPtr message, IntPtr data)
     {
         if (code < 0 || _disposed) return CallNextHookEx(_mouseHook, code, message, data);
+        long callbackAt = _diagnostics.BeginHookCallback();
         try
         {
             var item = Marshal.PtrToStructure<MouseHookData>(data);
+            _diagnostics.RecordHookEventArrival(item.Flags, 1, item.ExtraInfo.ToUInt64(), item.Time);
             if ((item.Flags & 1) != 0 || item.ExtraInfo.ToUInt64() == InjectionTag)
                 return CallNextHookEx(_mouseHook, code, message, data);
             var msg = message.ToInt32();
@@ -454,9 +464,14 @@ public sealed class InputRouter : IDisposable
                 return new IntPtr(1);
             }
             if (!_controller && _remote && _blockLocal) return new IntPtr(1);
+            return CallNextHookEx(_mouseHook, code, message, data);
         }
-        catch (Exception error) { RecoverHookError(error); }
-        return CallNextHookEx(_mouseHook, code, message, data);
+        catch (Exception error)
+        {
+            RecoverHookError(error);
+            return CallNextHookEx(_mouseHook, code, message, data);
+        }
+        finally { _diagnostics.EndHookCallback(callbackAt); }
     }
 
     // Plans a local move without native calls; an immediate crossing runs in the same hook event.
@@ -507,9 +522,11 @@ public sealed class InputRouter : IDisposable
     private IntPtr KeyboardHook(int code, IntPtr message, IntPtr data)
     {
         if (code < 0 || _disposed) return CallNextHookEx(_keyboardHook, code, message, data);
+        long callbackAt = _diagnostics.BeginHookCallback();
         try
         {
             var item = Marshal.PtrToStructure<KeyboardHookData>(data);
+            _diagnostics.RecordHookEventArrival(item.Flags, 0x10, item.ExtraInfo.ToUInt64(), item.Time);
             if ((item.Flags & 0x10) != 0 || item.ExtraInfo.ToUInt64() == InjectionTag)
                 return CallNextHookEx(_keyboardHook, code, message, data);
             var msg = message.ToInt32();
@@ -532,9 +549,14 @@ public sealed class InputRouter : IDisposable
             }
             if (_controller && _remote) { RouteControllerKey(key, down); return new IntPtr(1); }
             if (!_controller && _remote && _blockLocal) return new IntPtr(1);
+            return CallNextHookEx(_keyboardHook, code, message, data);
         }
-        catch (Exception error) { RecoverHookError(error); }
-        return CallNextHookEx(_keyboardHook, code, message, data);
+        catch (Exception error)
+        {
+            RecoverHookError(error);
+            return CallNextHookEx(_keyboardHook, code, message, data);
+        }
+        finally { _diagnostics.EndHookCallback(callbackAt); }
     }
 
     private bool HasPhysical(int generic, int left, int right) =>
@@ -821,13 +843,23 @@ public sealed class InputRouter : IDisposable
     private void InjectBatch(NativeInput[] inputs)
     {
         if (!_started || inputs.Length == 0) return;
-        if (!_nativeInputEnabled)
+        var testObserver = _nativeInputEnabled ? null : NativeInputRequestedForTesting;
+        if (!_nativeInputEnabled && testObserver is null) return;
+        long startedAt = _diagnostics.BeginNativeInput(inputs.Length);
+        bool failed = true;
+        try
         {
-            NativeInputRequestedForTesting?.Invoke(inputs.Length);
-            return;
+            if (testObserver is not null)
+            {
+                testObserver(inputs.Length);
+                failed = false;
+                return;
+            }
+            failed = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length;
+            if (failed)
+                LastError = "Windows từ chối thao tác nhập. Hãy chạy hai ứng dụng với cùng mức quyền; UAC/desktop bảo mật không hỗ trợ.";
         }
-        if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length)
-            LastError = "Windows từ chối thao tác nhập. Hãy chạy hai ứng dụng với cùng mức quyền; UAC/desktop bảo mật không hỗ trợ.";
+        finally { _diagnostics.EndNativeInput(startedAt, failed); }
     }
 
     private static bool IsButton(string? value) => value is "left" or "right" or "middle" or "x1" or "x2";
@@ -891,6 +923,7 @@ public sealed class InputRouter : IDisposable
     private void QueueOutbound(Packet packet, Action<Packet> sender)
     {
         bool startWorker;
+        long queuedAt = Stopwatch.GetTimestamp();
         lock (_outboundLock)
         {
             // A slow sender used to accumulate every 1000 Hz mouse report before a wheel
@@ -898,8 +931,8 @@ public sealed class InputRouter : IDisposable
             // Every wheel tick, key, text edit, drag boundary and enter/leave stays ordered.
             if (packet.Type == "move" && _outbound.Last is { } last &&
                 last.Value.Packet.Type == "move" && ReferenceEquals(last.Value.Sender, sender))
-                last.Value = (packet, sender);
-            else _outbound.AddLast((packet, sender));
+                last.Value = (packet, sender, queuedAt);
+            else _outbound.AddLast((packet, sender, queuedAt));
             startWorker = !_sending;
             _sending = true;
         }
@@ -910,7 +943,7 @@ public sealed class InputRouter : IDisposable
     {
         while (true)
         {
-            (Packet Packet, Action<Packet> Sender) item;
+            (Packet Packet, Action<Packet> Sender, long QueuedAt) item;
             lock (_outboundLock)
             {
                 if (_outbound.First is not { } first)
@@ -921,6 +954,7 @@ public sealed class InputRouter : IDisposable
                 item = first.Value;
                 _outbound.RemoveFirst();
             }
+            _diagnostics.RecordOutgoingWait(item.QueuedAt);
             try { item.Sender(item.Packet); }
             catch (Exception error)
             {
@@ -935,40 +969,72 @@ public sealed class InputRouter : IDisposable
     }
 
     private void NotifyRemoteChanged(bool value) => Post(() => RemoteControlChanged?.Invoke(value));
-    private void OnOwner(Action action)
+    private void OnOwner(Action action, bool measureInputQueue = false)
     {
         if (_disposed) return;
-        if (_context is not null && Environment.CurrentManagedThreadId != _ownerThread) Post(action);
-        else action();
+        if (_context is not null && Environment.CurrentManagedThreadId != _ownerThread) Post(action, measureInputQueue);
+        else
+        {
+            if (measureInputQueue && _started) _diagnostics.RecordInlineDispatch();
+            action();
+        }
     }
-    private void Post(Action action)
+    private void Post(Action action, bool measureInputQueue = false)
     {
         var context = _context;
         if (context is null) { if (!_disposed) action(); return; }
-        try { context.Post(_ => { if (!_disposed) action(); }, null); }
-        catch (InvalidAsynchronousStateException) when (_disposed || Volatile.Read(ref _disposeRequested) != 0) { }
+        long queuedAt = measureInputQueue && _started ? _diagnostics.QueueDispatcher() : 0;
+        try
+        {
+            context.Post(_ =>
+            {
+                if (queuedAt != 0) _diagnostics.StartDispatcher(queuedAt);
+                if (!_disposed) action();
+            }, null);
+        }
+        catch (InvalidAsynchronousStateException) when (_disposed || Volatile.Read(ref _disposeRequested) != 0)
+        {
+            if (queuedAt != 0) _diagnostics.CancelDispatcher();
+        }
+        catch
+        {
+            if (queuedAt != 0) _diagnostics.CancelDispatcher();
+            throw;
+        }
     }
-    private Task OnOwnerAsync(Action action, CancellationToken cancellationToken)
+    private Task OnOwnerAsync(Action action, CancellationToken cancellationToken, bool measureInputQueue = false)
     {
         if (cancellationToken.IsCancellationRequested) return Task.FromCanceled(cancellationToken);
         if (_disposed) return Task.CompletedTask;
         var context = _context;
         if (context is null || Environment.CurrentManagedThreadId == _ownerThread)
         {
+            if (measureInputQueue && _started) _diagnostics.RecordInlineDispatch();
             try { action(); return Task.CompletedTask; }
             catch (Exception error) { return Task.FromException(error); }
         }
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        long queuedAt = measureInputQueue && _started ? _diagnostics.QueueDispatcher() : 0;
         try
         {
             context.Post(_ =>
             {
+                if (queuedAt != 0) _diagnostics.StartDispatcher(queuedAt);
                 if (_disposed || cancellationToken.IsCancellationRequested) { completion.TrySetCanceled(); return; }
                 try { action(); completion.TrySetResult(); }
                 catch (Exception error) { completion.TrySetException(error); }
             }, null);
         }
-        catch (InvalidAsynchronousStateException) { completion.TrySetCanceled(); }
+        catch (InvalidAsynchronousStateException)
+        {
+            if (queuedAt != 0) _diagnostics.CancelDispatcher();
+            completion.TrySetCanceled();
+        }
+        catch
+        {
+            if (queuedAt != 0) _diagnostics.CancelDispatcher();
+            throw;
+        }
         return completion.Task.WaitAsync(cancellationToken);
     }
     private void RecoverHookError(Exception error)
@@ -1001,6 +1067,7 @@ public sealed class InputRouter : IDisposable
         StopHooks();
         _started = false;
         _disposed = true;
+        _diagnostics.StopDispatcher();
         _application?.ExitThread();
     }
 
@@ -1046,6 +1113,178 @@ public sealed class InputRouter : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, StringBuilder text, int capacity, uint flags, IntPtr layout);
     [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr GetModuleHandle(string? moduleName);
+}
+
+/// <summary>Aggregate timings only; contains no packets, keys, text, clipboard data or coordinates.</summary>
+public sealed record InputDiagnosticsSnapshot(
+    InputTimingSnapshot DispatcherQueue,
+    InputTimingSnapshot NativeInjection,
+    InputTimingSnapshot OutgoingQueue,
+    InputTimingSnapshot HookEventAge,
+    InputTimingSnapshot OwnInjectedEventAge,
+    InputTimingSnapshot HookCallback,
+    int PendingDispatcherWork,
+    int PendingOutgoingWork,
+    long NativeInputs,
+    long NativeFailures,
+    bool NativeInjectionInProgress,
+    double NativeInjectionInProgressMilliseconds,
+    bool HookCallbackInProgress,
+    double HookCallbackInProgressMilliseconds,
+    bool NativeInputEnabled);
+
+public readonly record struct InputTimingSnapshot(
+    long Count,
+    double LastMilliseconds,
+    double AverageMilliseconds,
+    double MaxMilliseconds,
+    long SlowCount,
+    double LastSampleAgeMilliseconds);
+
+// Locks protect only numeric counter updates/copies, never input work, callbacks or dispatch
+// waits. UI snapshots therefore remain available during a stalled external global hook.
+internal sealed class InputDiagnostics
+{
+    private readonly object _sync = new();
+    private readonly TimingSamples _dispatcher = new(), _native = new(), _outgoing = new(),
+        _hookAge = new(), _ownInjectedAge = new(), _hook = new();
+    private int _pendingDispatcher, _nativeActive, _hookActive;
+    private long _nativeInputs, _nativeFailures, _nativeActiveSince, _hookActiveSince;
+
+    internal long QueueDispatcher()
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync) _pendingDispatcher++;
+        return now;
+    }
+
+    internal void StartDispatcher(long queuedAt)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync)
+        {
+            _pendingDispatcher = Math.Max(0, _pendingDispatcher - 1);
+            _dispatcher.Record(Math.Max(0, now - queuedAt), now);
+        }
+    }
+
+    internal void RecordInlineDispatch()
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync) _dispatcher.Record(0, now);
+    }
+
+    internal void CancelDispatcher() { lock (_sync) _pendingDispatcher = Math.Max(0, _pendingDispatcher - 1); }
+    internal void StopDispatcher() { lock (_sync) _pendingDispatcher = 0; }
+
+    internal long BeginNativeInput(int count)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync)
+        {
+            if (_nativeActive++ == 0) _nativeActiveSince = now;
+            _nativeInputs += count;
+        }
+        return now;
+    }
+
+    internal void EndNativeInput(long startedAt, bool failed)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync)
+        {
+            _native.Record(Math.Max(0, now - startedAt), now);
+            if (failed) _nativeFailures++;
+            if (--_nativeActive == 0) _nativeActiveSince = 0;
+        }
+    }
+
+    internal void RecordOutgoingWait(long queuedAt)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync) _outgoing.Record(Math.Max(0, now - queuedAt), now);
+    }
+
+    internal long BeginHookCallback()
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync) if (_hookActive++ == 0) _hookActiveSince = now;
+        return now;
+    }
+
+    internal void EndHookCallback(long startedAt)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync)
+        {
+            _hook.Record(Math.Max(0, now - startedAt), now);
+            if (--_hookActive == 0) _hookActiveSince = 0;
+        }
+    }
+
+    internal void RecordHookEventArrival(uint flags, uint injectedMask, ulong extraInfo, uint eventTime)
+    {
+        var target = SelectHookAge(flags, injectedMask, extraInfo);
+        if (target is not null) RecordNativeEventAge(target, eventTime, GetTickCount());
+    }
+
+    internal void RecordHookEventArrival(uint flags, uint injectedMask, ulong extraInfo, uint eventTime, uint nowMilliseconds)
+    {
+        var target = SelectHookAge(flags, injectedMask, extraInfo);
+        if (target is not null) RecordNativeEventAge(target, eventTime, nowMilliseconds);
+    }
+
+    private TimingSamples? SelectHookAge(uint flags, uint injectedMask, ulong extraInfo)
+    {
+        // Own injection must be observed before the hook's existing early-return filter.
+        // Other software's injected events cannot establish our Windows input-queue delay.
+        if (extraInfo == InputRouter.InjectionTag) return _ownInjectedAge;
+        return (flags & injectedMask) == 0 ? _hookAge : null;
+    }
+
+    // Native hook timestamps are DWORD uptime milliseconds, unlike QPC durations. Subtract
+    // modulo 2^32 to survive the 49.7-day wrap; discard invalid/future timestamp differences.
+    internal void RecordHookEventAge(uint eventTime, uint nowMilliseconds)
+        => RecordNativeEventAge(_hookAge, eventTime, nowMilliseconds);
+
+    private void RecordNativeEventAge(TimingSamples target, uint eventTime, uint nowMilliseconds)
+    {
+        uint age = unchecked(nowMilliseconds - eventTime);
+        if (age > int.MaxValue) return;
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync) target.Record(age * (Stopwatch.Frequency / 1000d), now);
+    }
+
+    internal InputDiagnosticsSnapshot Snapshot(bool nativeInputEnabled, int pendingOutgoing = 0)
+    {
+        long now = Stopwatch.GetTimestamp();
+        lock (_sync) return new(_dispatcher.Snapshot(now), _native.Snapshot(now), _outgoing.Snapshot(now),
+            _hookAge.Snapshot(now), _ownInjectedAge.Snapshot(now), _hook.Snapshot(now), _pendingDispatcher, pendingOutgoing,
+            _nativeInputs, _nativeFailures, _nativeActive != 0,
+            _nativeActive == 0 ? 0 : Milliseconds(Math.Max(0, now - _nativeActiveSince)),
+            _hookActive != 0, _hookActive == 0 ? 0 : Milliseconds(Math.Max(0, now - _hookActiveSince)), nativeInputEnabled);
+    }
+
+    private static double Milliseconds(long ticks) => ticks * (1000d / Stopwatch.Frequency);
+
+    // Match MSLLHOOKSTRUCT/KBDLLHOOKSTRUCT's native uptime clock explicitly, including its
+    // sleep accounting and DWORD wrap; do not assume managed runtime clock implementations.
+    [DllImport("kernel32.dll")] private static extern uint GetTickCount();
+
+    private sealed class TimingSamples
+    {
+        private long _count, _slow, _at;
+        private double _last, _max;
+        private double _totalTicks;
+        internal void Record(double ticks, long now)
+        {
+            _count++; _last = ticks; _max = Math.Max(_max, ticks); _totalTicks += ticks; _at = now;
+            if (ticks * (1000d / Stopwatch.Frequency) >= 50) _slow++;
+        }
+        internal InputTimingSnapshot Snapshot(long now) => new(_count, _last * (1000d / Stopwatch.Frequency),
+            _count == 0 ? 0 : _totalTicks * (1000d / Stopwatch.Frequency) / _count,
+            _max * (1000d / Stopwatch.Frequency), _slow, _count == 0 ? -1 : Milliseconds(Math.Max(0, now - _at)));
+    }
 }
 
 /// <summary>Pure latest-position pacing; critical input can force a flush with no wait.</summary>

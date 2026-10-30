@@ -101,7 +101,9 @@ public sealed partial class MainForm : Form
     {
         if (_closing || _peer != null) { peer.Dispose(); return; }
         _peer = peer; _helloReceived = false; _sessionIsHost = IsHost; bool sessionIsHost = IsHost; _session = new(); var session = _session; var token = session.Token;
-        Action<Packet> inputSender = packet => peer.TrySend(packet);
+        _inputDiagnosticsCapable = false;
+        var inputLatency = new InputLatencySampler(); _inputLatency = inputLatency;
+        Action<Packet> inputSender = packet => peer.TrySend(!sessionIsHost && _inputDiagnosticsCapable ? inputLatency.Stamp(packet) : packet);
         _input.Send = inputSender; _audio.Send = packet => peer.TrySend(packet);
         ClipboardFiles? sessionClipboardFiles = null;
         ClipboardImages? sessionClipboardImages = null;
@@ -113,6 +115,11 @@ public sealed partial class MainForm : Form
         var background = new SessionInbox(128, 16 * 1024 * 1024);
         peer.Received += packet =>
         {
+            if (packet.Type == "input-ack")
+            {
+                if (!token.IsCancellationRequested && !sessionIsHost && _inputDiagnosticsCapable) inputLatency.Accept(packet);
+                return;
+            }
             var item = CaptureSessionPacket(packet);
             if (!token.IsCancellationRequested && !inbox.TryWriteSession(item))
                 peer.Abort("Hàng đợi xử lý đã đầy; phiên được dừng để nhả phím và chuột.");
@@ -122,6 +129,7 @@ public sealed partial class MainForm : Form
             try { session.Cancel(); } catch (ObjectDisposedException) { }
             inbox.Complete();
             background.Complete();
+            inputLatency.Stop();
             sessionFiles?.Dispose();
             sessionClipboardFiles?.Dispose();
             sessionClipboardImages?.Dispose();
@@ -186,7 +194,7 @@ public sealed partial class MainForm : Form
                         }
                         int start = index;
                         while (index < batch.Count && IsInputPacket(batch[index].Packet)) index++;
-                        await HandleInputPackets(batch.GetRange(start, index - start).Select(item => item.Packet).ToList(), token);
+                        await HandleInputPackets(batch.GetRange(start, index - start).Select(item => item.Packet).ToList(), peer, token);
                     }
                 }
             }
@@ -194,7 +202,7 @@ public sealed partial class MainForm : Form
             catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); }
         }, token);
         var bounds = SystemInformation.VirtualScreen;
-        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion, ClipboardImagesVersion = ClipboardImages.ProtocolVersion });
+        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion, ClipboardImagesVersion = ClipboardImages.ProtocolVersion, InputDiagnosticsVersion = 1 });
         if (IsHost) Send(new Packet { Type = "permissions", Permissions = _permissions with { } });
         ApplyPermissions(); _remoteState.Text = IsHost ? "MÁY B SẴN SÀNG NHẬN ĐIỀU KHIỂN" : "CHUỘT ĐANG Ở MÁY A";
         _devicesPage.SetSessionState(true); _devicesPage.Connecting = false; _tabs.SelectedTab = _sessionTab;
@@ -258,6 +266,7 @@ public sealed partial class MainForm : Form
                     _input.RemoteWidth = p.Width; _input.RemoteHeight = p.Height; _peerName.Text = "Đối tác: " + (p.Name ?? "Máy tính")[..Math.Min(p.Name?.Length ?? 0, 100)];
                     _clipboardFilesCapable = p.ClipboardFilesVersion == 1;
                     _clipboardImagesCapable = p.ClipboardImagesVersion == ClipboardImages.ProtocolVersion;
+                    _inputDiagnosticsCapable = p.InputDiagnosticsVersion == 1;
                     _helloReceived = true; _devicesPage.SetSessionState(true, p.Name); ApplyPermissions(); break;
                 case "permissions" when !IsHost && p.Permissions != null: _permissions = p.Permissions; ApplyPermissions(); break;
                 case "clipboard" when item.Permissions?.Clipboard == true: ReceiveClipboardText(p, token); break;
@@ -295,7 +304,7 @@ public sealed partial class MainForm : Form
     static bool IsInputBarrier(Packet packet) => packet.Type is "hello" or "permissions"
         || (packet.Type == "feature" && packet.Name is "privacy" or "block");
 
-    async Task HandleInputPackets(List<Packet> packets, CancellationToken token)
+    async Task HandleInputPackets(List<Packet> packets, PeerConnection peer, CancellationToken token)
     {
         if (token.IsCancellationRequested || !_helloReceived) return;
         bool host = _sessionIsHost;
@@ -305,6 +314,10 @@ public sealed partial class MainForm : Form
         await _input.ApplyRemoteBatchAsync(eligible, token).ConfigureAwait(false);
         if (token.IsCancellationRequested) return;
         if (_input.LastError is { } error) throw new InvalidOperationException(error);
+        if (host && _inputDiagnosticsCapable)
+            foreach (var packet in eligible)
+                if (packet.Id is { Length: 32 } && Guid.TryParseExact(packet.Id, "N", out _) && packet.Length > 0 && !token.IsCancellationRequested)
+                    peer.TrySend(new Packet { Type = "input-ack", Id = packet.Id, Length = packet.Length });
         if (host && eligible.Any(packet => packet.Type == "leave"))
         {
             _input.SetBlockLocalInput(false);
@@ -426,6 +439,7 @@ public sealed partial class MainForm : Form
     }
     void Disconnect()
     {
+        _inputLatency?.Stop(); _inputLatency = null; _inputDiagnosticsCapable = false;
         var peer = _peer; _peer = null; _helloReceived = false; _session?.Cancel(); _inbox?.Complete(); _inbox = null;
         CancelClipboardTransfers(); _clipboardFiles?.Dispose(); _clipboardFiles = null; _clipboardFilesCapable = false;
         _clipboardImages?.Dispose(); _clipboardImages = null; _clipboardImagesCapable = false;

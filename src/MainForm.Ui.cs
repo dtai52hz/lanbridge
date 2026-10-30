@@ -128,7 +128,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.5.2", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.5.3", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 
@@ -247,7 +247,11 @@ public sealed partial class MainForm
         _disconnect.EnabledChanged += (_, _) => endSession.Enabled = _disconnect.Enabled;
         liveStatus.Controls.Add(endSession, 1, 0);
         ConfigureUiLabel(_featureStatus, 8.5f, Muted); _featureStatus.Margin = new Padding(0, 6, 0, 6);
-        liveStatus.Controls.Add(_featureStatus, 0, 1); liveStatus.SetColumnSpan(_featureStatus, 2); main.Controls.Add(liveStatus, 0, 3);
+        liveStatus.Controls.Add(_featureStatus, 0, 1);
+        var diagnostics = new DarkButton(); StyleButton(diagnostics, "Đo độ trễ", 0, 0, 133, 30, Accent);
+        diagnostics.Dock = DockStyle.Fill; diagnostics.Margin = new Padding(0, 3, 0, 4);
+        diagnostics.Click += (_, _) => ShowLatencyDiagnostics(); liveStatus.Controls.Add(diagnostics, 1, 1);
+        main.Controls.Add(liveStatus, 0, 3);
 
         var logCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(14), Margin = Padding.Empty };
         var logContent = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = Card, Margin = Padding.Empty };

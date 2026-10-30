@@ -79,6 +79,7 @@ internal static partial class Program
 
                 await CheckMinimizedSessionAsync(a, b, first, aInput, bInput);
                 await CheckMoveAndScrollLatencyAsync(a, b, first, aInput, bInput);
+                await CheckInputAcknowledgementAsync(a, b, first, aInput, bInput);
                 await CheckInteractiveTrafficAsync(a, b, first, aInput, bInput);
 
                 // Compose real Unicode correction packets, enqueue them through the input router's

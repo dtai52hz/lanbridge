@@ -1,3 +1,10 @@
+# 0.5.3
+
+- Thêm **Phiên điều khiển → Đo độ trễ** và chép báo cáo tổng hợp trên A/B để tìm nguyên nhân khựng theo đợt trong phiên thật.
+- Đo RTT heartbeat bằng nonce và đồng hồ cục bộ; thêm biên nhận input sau khi đi qua luồng nhập B. Giới hạn số mẫu chờ, bỏ mẫu sai/lặp/phiên cũ và thỏa thuận khả năng với peer cũ.
+- Đo riêng hàng đợi gửi, hàng đợi luồng nhập, thời gian gọi SendInput, callback hook và tuổi sự kiện vật lý/input của LanBridge. Chỉ lưu số liệu tổng hợp; không ghi nội dung phím, clipboard hoặc tọa độ.
+- Giữ mã đo khi gộp move vào vị trí mới nhất; thêm kiểm tra TLS với relay trễ, tương thích peer cũ, hủy phiên, gộp mẫu và các khâu chờ giả lập. Các số đo chưa xác nhận ứng dụng B đã vẽ xong.
+
 # 0.5.2
 
 - Sửa đường nhận chuột trên A: không gọi WarpLocal/SendInput cho từng mẫu vật lý đã bị hook giữ lại; giữ một lần đặt con trỏ khi vào/ra B. Tránh tạo thêm hàng nghìn lượt xử lý hook lúc vừa rê chuột vừa click/gõ.

@@ -151,16 +151,20 @@ internal static class LatencyProbe
         }
     }
 
-    private sealed class LimitedRelay : IAsyncDisposable
+    internal sealed class LimitedRelay : IAsyncDisposable
     {
         private readonly TcpListener _listener = new(IPAddress.Loopback, 0);
         private readonly CancellationTokenSource _stop = new();
         private readonly Task _bridge;
+        private readonly int _delayMilliseconds;
+        private readonly bool _bothDirections;
         public bool Limit;
         public int Port => ((IPEndPoint)_listener.LocalEndpoint).Port;
 
-        public LimitedRelay(int targetPort)
+        public LimitedRelay(int targetPort, int delayMilliseconds = 8, bool bothDirections = false)
         {
+            _delayMilliseconds = delayMilliseconds;
+            _bothDirections = bothDirections;
             _listener.Start();
             _bridge = BridgeAsync(targetPort);
         }
@@ -187,7 +191,8 @@ internal static class LatencyProbe
             int count;
             while ((count = await from.ReadAsync(bytes, _stop.Token)) > 0)
             {
-                if (limited && Volatile.Read(ref Limit)) await Task.Delay(8, _stop.Token);
+                if ((limited || _bothDirections) && Volatile.Read(ref Limit))
+                    await Task.Delay(_delayMilliseconds, _stop.Token);
                 await to.WriteAsync(bytes.AsMemory(0, count), _stop.Token);
             }
         }

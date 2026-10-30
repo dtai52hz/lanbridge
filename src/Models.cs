@@ -43,6 +43,7 @@ public sealed record Packet
     public Permissions? Permissions { get; set; }
     public int ClipboardFilesVersion { get; set; }
     public int ClipboardImagesVersion { get; set; }
+    public int InputDiagnosticsVersion { get; set; }
     public string? BatchId { get; set; }
     public ClipboardFileEntry[]? ClipboardEntries { get; set; }
 }

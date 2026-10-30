@@ -37,9 +37,15 @@ Lệnh tắt ghi hình đang chờ sau file I/O phải còn hiệu lực sau khi
 
 `--latency-only` in p50/p95/p99 từ enqueue tới callback nhận TLS localhost, khi chỉ có input, kèm move và kèm bulk 48 KiB có ACK. `--latency-shaped` đặt relay TCP loopback giới hạn tốc độ để so sánh bulk có/không ACK. Hai chế độ không thuộc bộ Test mặc định và không đo độ trễ vật lý giữa hai PC. Truyền file thủ công hiện chưa có ACK từng khối như clipboard; khi mạng chậm, dữ liệu trên cùng TCP có thể làm tăng thời gian chờ input.
 
+Số đo 0.5.3 trong bộ Test mặc định:
+
+- TransportSmoke: RTT với nonce/monotonic clock, pong sai/lặp, observer lỗi, peer cũ không echo vẫn giữ phiên và RTT rỗng. Relay TLS trễ 300 ms mỗi chiều phải làm RTT tăng rồi hồi phục sau khi bỏ trễ. Gói input thường không thêm metadata; Id/Length được giữ khi có mẫu, kể cả qua gộp move.
+- NativeInputSmoke: chủ động giữ dispatcher, sender và native observer trong 120 ms để xác minh từng bộ đếm; snapshot vẫn đọc được khi owner bận. Kiểm tra callback lồng nhau, lỗi native, dấu thời gian DWORD vòng và phân biệt physical/own-injected/foreign-injected. Không cài hook hoặc gọi SendInput thật.
+- SessionSmoke: gói mẫu đi qua sender thật của InputRouter và TLS; B giữ pump không được ACK sớm, thả pump khi UI vẫn dừng phải trả ACK. Mẫu sai/lặp/phiên đã đóng bị bỏ, gộp move giữ tọa độ mới nhất và mã đo, báo cáo không chứa marker nội dung phím.
+
 ## Thử trên hai máy thật
 
-1. Mở bản 0.5.2 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
+1. Mở bản 0.5.3 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
 2. Chọn đúng vị trí B; thử chuyển ngay sang B, trở lại A, sang B tiếp mà không đợi và hotkey Ctrl+Alt+F12. Thử trái/phải, cuộn, middle/X buttons và gõ trong Notepad trên B. Trên A chọn Telex gõ `tieengs Vieetj`, VNI gõ `tie6ng1 Vie6t5`; cả hai cần ra `tiếng Việt`. Thử Backspace, chữ hoa, Ctrl+C/V/Z, Shift+mũi tên, Shift+click và chuyển sang Phím gốc. Tắt bộ gõ ngoài nếu can thiệp; không cần UniKey B cho chế độ tích hợp.
 3. Trong lúc giữ Shift hoặc nút chuột trên B, rút mạng hoặc ngắt kết nối. Kiểm tra A lấy lại chuột và B không còn phím/nút bị giữ.
 4. Trên B tắt quyền Chuột/phím khi A đang điều khiển. Xác minh A nhận lại chuột và không tiếp tục thao tác được B cho tới khi B bật quyền lại.
@@ -52,5 +58,6 @@ Lệnh tắt ghi hình đang chờ sau file I/O phải còn hiệu lực sau khi
 11. Bấm nút **−** trên A và B, tiếp tục di chuyển chuột/gõ tiếng Việt, rồi mở lại từ thanh tác vụ. Lặp lại khi đang gửi file/nghe âm thanh; phiên phải giữ kết nối và không bị dồn thao tác cũ khi mở lại. Kéo và thay đổi kích thước cửa sổ trong khi thao tác trên B. Sau đó rút mạng để kiểm tra cơ chế nhả điều khiển vẫn hoạt động.
 12. Bật Clipboard, tắt Truyền file: trên B chụp vùng bằng Win+Shift+S rồi về A Ctrl+V trong Paint/Word/ứng dụng chat. Thử chiều ngược, ảnh 4K, Print Screen theo cài đặt Windows, sao chép ảnh trong trình duyệt, clipboard bị ứng dụng khác giữ, và chụp ảnh mới/sao chép chữ/file trong lúc ảnh cũ đang nhận. Tắt Clipboard phải chặn ảnh nhưng không làm ngắt phiên chuột/phím.
 13. Mở trang dài trên B, vừa rê chuột qua các vùng khác nhau vừa cuộn dọc/ngang, đổi chiều, giữ Ctrl/Shift và kéo thanh cuộn. Thử các mức polling chuột đang có (125/500/1.000/8.000 Hz), lúc gửi file/ảnh và thu nhỏ ứng dụng. Kiểm tra không mất nấc, cuộn sai vị trí, dồn thao tác cũ hoặc tự ngắt; so sánh Ethernet/Wi-Fi và ghi lại tải máy nếu còn giật.
+14. Trên A/B mở Đo độ trễ, thao tác 15–20 giây tới khi tái hiện khựng, tạm dừng hiển thị rồi chép hai báo cáo. So sánh RTT với chờ gửi trên A, chờ pump/SendInput/hook-age trên B; giữ cả tuổi mẫu và số mẫu. Thử lại cả hai bằng dây LAN nếu có sẵn để đối chiếu đường Wi-Fi. RTT thấp hoặc SendInput gọi nhanh chưa xác nhận target app trên B đã nhận/vẽ xong.
 
 Các bước trên là kế hoạch xác minh thủ công; chưa được đánh dấu đạt cho hai máy thật.

@@ -43,6 +43,15 @@ internal sealed class SessionInbox
             if (_completed) return false;
             if (packet.Type == "move" && _packets.Last is { Value.Packet.Type: "move" } last)
             {
+                // Coalescing keeps the latest position while carrying an outstanding
+                // diagnostic receipt token. Losing a token is not lost physical input,
+                // but retaining it lets a congested path still produce a useful sample.
+                if (packet.Id is null && packet.Length == 0 && last.Value.Packet is { Id.Length: 32, Length: > 0 } previous
+                    && Guid.TryParseExact(previous.Id, "N", out _))
+                {
+                    packet = packet with { Id = previous.Id, Length = previous.Length };
+                    item = item with { Packet = packet };
+                }
                 long oldSize = Size(last.Value.Packet), newSize = Size(packet);
                 if (newSize - oldSize > _byteCapacity - _bytes) return true;
                 _bytes -= oldSize;

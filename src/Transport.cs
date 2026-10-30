@@ -329,6 +329,10 @@ public sealed class HostServer : IDisposable
     }
 }
 
+/// <summary>Heartbeat round-trip measurements, including queued writes and both peers' TLS readers.</summary>
+public sealed record ConnectionLatency(double LastMilliseconds, double SmoothedMilliseconds,
+    double MinimumMilliseconds, double MaximumMilliseconds, long Samples, DateTimeOffset SampledAt);
+
 public sealed class PeerConnection : IDisposable
 {
     public const int MaximumPacketBytes = 4 * 1024 * 1024;
@@ -337,6 +341,9 @@ public sealed class PeerConnection : IDisposable
     private readonly SslStream _stream;
     private readonly CancellationTokenSource _stop = new();
     private readonly OutboundQueue _outbound = new(QueueCapacity);
+    private readonly object _latencyGate = new();
+    private readonly Dictionary<string, long> _pendingHeartbeats = new(StringComparer.Ordinal);
+    private ConnectionLatency? _latency;
     private long _lastReceive = Stopwatch.GetTimestamp();
     private int _started;
     private int _closed;
@@ -348,7 +355,7 @@ public sealed class PeerConnection : IDisposable
     };
     // Packet/Permissions have nonzero defaults. Restrict omission of defaults to
     // this input-only DTO so a denied permission is always transmitted as false.
-    private readonly record struct InputMessage(string Type, string? Text, string? Name,
+    private readonly record struct InputMessage(string Type, string? Text, string? Name, string? Id, long Length,
         int X, int Y, int Dx, int Dy, int Key, int Scan, int Flags, bool Down, string? Button, bool Allow);
 
     // Keep only the newest unsent absolute position in each uninterrupted motion run.
@@ -375,9 +382,17 @@ public sealed class PeerConnection : IDisposable
         private bool TryWriteLocked(Outgoing outgoing)
         {
             if (_completed) return false;
-            if (outgoing is { Packet.Type: "move", Completion: null } &&
+            if (outgoing is { Packet: { Type: "move" } replacement, Completion: null } &&
                 _packets.Last is { Value: { Packet.Type: "move", Completion: null } } last)
             {
+                var previous = last.Value.Packet!;
+                // A sampled position represents this waiting motion cohort. Keep
+                // its receipt token when newer unsampled positions replace it;
+                // otherwise congestion would erase the very samples measuring it.
+                if (replacement.Id is null && replacement.Length == 0
+                    && previous.Id is { Length: 32 } id && previous.Length > 0
+                    && Guid.TryParseExact(id, "N", out _))
+                    outgoing = outgoing with { Packet = replacement with { Id = id, Length = previous.Length } };
                 last.Value = outgoing;
                 return true;
             }
@@ -444,6 +459,10 @@ public sealed class PeerConnection : IDisposable
 
     public event Action<Packet>? Received;
     public event Action<string?>? Closed;
+    /// <summary>Raised on the reader thread. Subscribers must return promptly; marshal UI work without waiting.</summary>
+    public event Action<ConnectionLatency>? LatencyUpdated;
+    /// <summary>Null until a peer echoes a tracked heartbeat. Older peers remain connected without RTT samples.</summary>
+    public ConnectionLatency? Latency => Volatile.Read(ref _latency);
     public bool IsClosed => Volatile.Read(ref _closed) != 0;
     public string RemoteAddress => (_tcp.Client.RemoteEndPoint as IPEndPoint)?.Address.ToString() ?? "";
 
@@ -582,7 +601,7 @@ public sealed class PeerConnection : IDisposable
     {
         Validate(packet);
         var bytes = packet.Type is "move" or "wheel" or "button" or "key" or "enter" or "leave" or "text"
-            ? JsonSerializer.SerializeToUtf8Bytes(new InputMessage(packet.Type, packet.Text, packet.Name,
+            ? JsonSerializer.SerializeToUtf8Bytes(new InputMessage(packet.Type, packet.Text, packet.Name, packet.Id, packet.Length,
                 packet.X, packet.Y, packet.Dx, packet.Dy, packet.Key, packet.Scan, packet.Flags,
                 packet.Down, packet.Button, packet.Allow), InputJson)
             : JsonSerializer.SerializeToUtf8Bytes(packet, WireJson.Options);
@@ -617,8 +636,14 @@ public sealed class PeerConnection : IDisposable
                 var packet = JsonSerializer.Deserialize<Packet>(bytes, WireJson.Options) ?? throw new InvalidDataException("Gói dữ liệu rỗng.");
                 Validate(packet);
                 Interlocked.Exchange(ref _lastReceive, Stopwatch.GetTimestamp());
-                if (packet.Type == "$ping") { TrySend(new Packet { Type = "$pong" }); continue; }
-                if (packet.Type == "$pong") continue;
+                if (packet.Type == "$ping")
+                {
+                    // Echo an opaque identifier and the originating peer's monotonic timestamp.
+                    // Never subtract a timestamp produced by the other PC's clock.
+                    TrySend(new Packet { Type = "$pong", Id = packet.Id, Length = packet.Length });
+                    continue;
+                }
+                if (packet.Type == "$pong") { RecordHeartbeat(packet); continue; }
                 if (Received is { } handlers)
                     foreach (Action<Packet> handler in handlers.GetInvocationList()) handler(packet);
             }
@@ -667,11 +692,52 @@ public sealed class PeerConnection : IDisposable
                     Close("Mất phản hồi từ máy bên kia; đã dừng điều khiển.");
                     return;
                 }
-                if (!TrySend(new Packet { Type = "$ping" })) return;
+                if (!SendHeartbeat()) return;
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
         catch { Close("Đã dừng phiên điều khiển."); }
+    }
+
+    private bool SendHeartbeat()
+    {
+        string id = Guid.NewGuid().ToString("N");
+        long started = Stopwatch.GetTimestamp();
+        lock (_latencyGate)
+        {
+            // Keep more than one in flight: an RTT above the 500 ms cadence must
+            // still be measurable. Legacy peers return plain pongs, so bound storage.
+            if (_pendingHeartbeats.Count >= 64)
+            {
+                string oldest = _pendingHeartbeats.MinBy(pair => pair.Value).Key;
+                _pendingHeartbeats.Remove(oldest);
+            }
+            _pendingHeartbeats[id] = started;
+        }
+        if (TrySend(new Packet { Type = "$ping", Id = id, Length = started })) return true;
+        lock (_latencyGate) _pendingHeartbeats.Remove(id);
+        return false;
+    }
+
+    private void RecordHeartbeat(Packet packet)
+    {
+        ConnectionLatency sample;
+        lock (_latencyGate)
+        {
+            if (packet.Id is null || !_pendingHeartbeats.TryGetValue(packet.Id, out long started)
+                || packet.Length != started) return;
+            _pendingHeartbeats.Remove(packet.Id);
+            double elapsed = Stopwatch.GetElapsedTime(started).TotalMilliseconds;
+            var previous = _latency;
+            sample = new(elapsed, previous is null ? elapsed : previous.SmoothedMilliseconds * .875 + elapsed * .125,
+                previous is null ? elapsed : Math.Min(previous.MinimumMilliseconds, elapsed),
+                previous is null ? elapsed : Math.Max(previous.MaximumMilliseconds, elapsed),
+                (previous?.Samples ?? 0) + 1, DateTimeOffset.UtcNow);
+            Volatile.Write(ref _latency, sample);
+        }
+        if (LatencyUpdated is { } handlers)
+            foreach (Action<ConnectionLatency> handler in handlers.GetInvocationList())
+                try { handler(sample); } catch { /* Diagnostic observers must not close an otherwise healthy session. */ }
     }
 
     internal void Abort(string reason) => Close(reason);
@@ -680,6 +746,7 @@ public sealed class PeerConnection : IDisposable
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;
         _stop.Cancel();
+        lock (_latencyGate) _pendingHeartbeats.Clear();
         _outbound.Complete();
         _tcp.Dispose();
         _stream.Dispose();

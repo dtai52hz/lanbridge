@@ -24,9 +24,12 @@ internal static class Program
             form.Shown += async (_, _) =>
             {
                 await Task.Delay(600);
-                using var bitmap = new Bitmap(form.Width, form.Height);
-                form.DrawToBitmap(bitmap, new Rectangle(Point.Empty, form.Size));
+                Form target = args.Contains("--preview-latency") ? form.ShowLatencyDiagnostics(false) : form;
+                if (target != form) await Task.Delay(100);
+                using var bitmap = new Bitmap(target.Width, target.Height);
+                target.DrawToBitmap(bitmap, new Rectangle(Point.Empty, target.Size));
                 bitmap.Save(Path.GetFullPath(args[previewOutput + 1]), System.Drawing.Imaging.ImageFormat.Png);
+                if (target != form) target.Dispose();
                 form.Close();
             };
         }

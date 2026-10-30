@@ -93,4 +93,5 @@ KeyboardRouteChecks.Run(Check);
 DispatcherChecks.Run(Check);
 PointerPipelineChecks.Run(Check);
 CapturePathChecks.Run(Check);
+InputDiagnosticsChecks.Run(Check);
 Console.WriteLine($"Native input smoke passed: {assertions} assertions; no hooks installed and no input injected.");

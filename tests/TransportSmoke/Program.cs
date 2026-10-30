@@ -19,6 +19,11 @@ if (args.Contains("--latency-shaped"))
     await LatencyProbe.RunShapedAsync();
     return;
 }
+if (args.Contains("--heartbeat-only"))
+{
+    await HeartbeatLatencyChecks.RunAsync(RawConnectAsync);
+    return;
+}
 
 static void Check(bool condition, string message)
 {
@@ -200,9 +205,78 @@ using (var host = new HostServer(IPAddress.Loopback, 0))
         var wheel = JsonSerializer.Deserialize<Packet>(bytes, WireJson.Options)!;
         Check(wheel.Type == "wheel" && wheel.X == 65535 && wheel.Y == 0 && wheel.Dx == -120 && wheel.Dy == 240,
             "Compact input JSON changed coordinates or wheel direction for the existing Packet reader.");
+        using (var json = JsonDocument.Parse(bytes))
+            Check(!json.RootElement.TryGetProperty("id", out _) && !json.RootElement.TryGetProperty("length", out _),
+                "Unsampled input must not carry optional diagnostic metadata.");
+        foreach (string type in new[] { "move", "wheel", "button", "key", "text" })
+        {
+            string id = Guid.NewGuid().ToString("N");
+            long timestamp = Stopwatch.GetTimestamp();
+            Check(sender.TrySend(new Packet { Type = type, Id = id, Length = timestamp, X = 123, Y = 456,
+                Dx = -30, Dy = 120, Key = 0x41, Scan = 0x1E, Flags = 1, Down = true, Button = "left", Text = "Việt" }),
+                "Sampled input did not queue.");
+            await ssl.ReadExactlyAsync(header, timeout.Token);
+            length = BinaryPrimitives.ReadInt32BigEndian(header);
+            bytes = new byte[length];
+            await ssl.ReadExactlyAsync(bytes, timeout.Token);
+            var sampled = JsonSerializer.Deserialize<Packet>(bytes, WireJson.Options)!;
+            Check(sampled.Type == type && sampled.Id == id && sampled.Length == timestamp
+                && sampled.X == 123 && sampled.Y == 456 && sampled.Dx == -30 && sampled.Dy == 120
+                && sampled.Key == 0x41 && sampled.Scan == 0x1E && sampled.Flags == 1 && sampled.Down
+                && sampled.Button == "left" && sampled.Text == "Việt",
+                $"The compact {type} input DTO stripped optional correlation metadata or changed its existing fields.");
+        }
+        Check(sender.TrySend(new Packet { Type = "move" }), "Zero/default input did not queue.");
+        await ssl.ReadExactlyAsync(header, timeout.Token);
+        length = BinaryPrimitives.ReadInt32BigEndian(header);
+        bytes = new byte[length];
+        await ssl.ReadExactlyAsync(bytes, timeout.Token);
+        using (var json = JsonDocument.Parse(bytes))
+            Check(json.RootElement.EnumerateObject().Count() == 1 && json.RootElement.GetProperty("type").GetString() == "move",
+                "Normal zero/default input gained diagnostic or unrelated fields.");
     }
 }
 Console.WriteLine("PASS: compact input frames retain existing JSON protocol compatibility.");
+
+using (var host = new HostServer(IPAddress.Loopback, 0))
+{
+    var accepted = Signal<PeerConnection>();
+    host.Connected += peer => { accepted.TrySetResult(peer); peer.Start(); };
+    host.Start();
+    using var controller = await PeerConnection.ConnectAsync(host.PairingCode("127.0.0.1"));
+    using var remote = await accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var actual = new List<Packet>();
+    var done = Signal<bool>();
+    remote.Received += packet => { actual.Add(packet); if (packet.Type == "sampled-burst-end") done.TrySetResult(true); };
+    string first = Guid.NewGuid().ToString("N"), older = Guid.NewGuid().ToString("N"), newer = Guid.NewGuid().ToString("N");
+    long firstTime = Stopwatch.GetTimestamp(), olderTime = firstTime + 1, newerTime = firstTime + 2;
+    Check(controller.TrySend(new Packet { Type = "move", X = 1, Id = first, Length = firstTime }), "A sampled move did not queue.");
+    for (int x = 2; x <= 1000; x++) Check(controller.TrySend(new Packet { Type = "move", X = x }), "Coalescing a sampled motion cohort failed.");
+    Check(controller.TrySend(new Packet { Type = "wheel", X = 1000, Dy = 120 }), "A wheel barrier did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 2000, Id = older, Length = olderTime }), "An older sample did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 2001 }), "A motion replacement did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 2002, Id = newer, Length = newerTime }), "A newer sample did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 2003 }), "A final motion replacement did not queue.");
+    Check(controller.TrySend(new Packet { Type = "key", Key = 0x41, Down = true }), "A key barrier did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 3000, Id = "invalid-token", Length = firstTime }), "An untracked move did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 3001 }), "An untracked move replacement did not queue.");
+    Check(controller.TrySend(new Packet { Type = "button", Button = "left", Down = true }), "A button barrier did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 4000, Id = Guid.NewGuid().ToString("N"), Length = 0 }), "A zero-timestamp move did not queue.");
+    Check(controller.TrySend(new Packet { Type = "move", X = 4001 }), "A zero-timestamp replacement did not queue.");
+    var written = controller.SendAsync(new Packet { Type = "sampled-burst-end" });
+    controller.Start();
+    await written.WaitAsync(TimeSpan.FromSeconds(3));
+    await done.Task.WaitAsync(TimeSpan.FromSeconds(3));
+    Check(actual.Count == 8 && actual[0] is { Type: "move", X: 1000 } && actual[0].Id == first && actual[0].Length == firstTime,
+        "A newer unsampled position erased the valid sample measuring its waiting cohort.");
+    Check(actual[1].Type == "wheel" && actual[2] is { Type: "move", X: 2003 }
+        && actual[2].Id == newer && actual[2].Length == newerTime && actual[3].Type == "key",
+        "A newer stamped move did not take precedence or a sample crossed a wheel/key barrier.");
+    Check(actual[4] is { Type: "move", X: 3001, Id: null, Length: 0 } && actual[5].Type == "button"
+        && actual[6] is { Type: "move", X: 4001, Id: null, Length: 0 },
+        "Motion coalescing propagated an invalid or incomplete diagnostic token.");
+}
+Console.WriteLine("PASS: adjacent move coalescing retains valid receipt tokens, favors new samples and preserves critical barriers.");
 
 using (var host = new HostServer(IPAddress.Loopback, 0))
 {
@@ -292,3 +366,4 @@ using (var host = new HostServer(IPAddress.Loopback, 0))
     valid.Start();
 }
 Console.WriteLine("PASS: an idle unauthenticated socket times out and the listener accepts the next valid controller.");
+await HeartbeatLatencyChecks.RunAsync(RawConnectAsync);
