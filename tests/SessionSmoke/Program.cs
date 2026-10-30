@@ -40,6 +40,7 @@ internal static class Program
 
     private static async Task RunAsync()
     {
+        await CheckInboxPressureAsync();
         string root = Path.Combine(Path.GetTempPath(), "LanBridge-SessionSmoke-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
         using var a = new MainForm(preview: true);
@@ -75,10 +76,13 @@ internal static class Program
                     && Get<Label>(b, "_peerName").Text.StartsWith("Đối tác:", StringComparison.Ordinal), "Hello packets did not update both peer labels.");
                 AssertNoHooks(aInput, bInput);
 
+                await CheckMinimizedSessionAsync(a, b, first, aInput, bInput);
+
                 // Compose real Unicode correction packets, enqueue them through the input router's
                 // production worker and TLS transport, then reconstruct B's received document.
-                // Preview routers never Start, so ApplyRemote cannot inject any desktop input.
+                // The receiver's explicit test pump cannot install hooks or inject desktop input.
                 var composer = new VietnameseComposer();
+                int textBeforeComposition = first.AtB.Count(p => p.Type == "text");
                 int expectedEdits = 0;
                 foreach (char key in "tieengs Vieetj, ddieeuf khieenr chuootj")
                 {
@@ -87,10 +91,10 @@ internal static class Program
                     expectedEdits++;
                     Call(aInput, "QueueText", edit);
                 }
-                await WaitUntilAsync(() => first.AtB.Count(p => p.Type == "text") == expectedEdits,
+                await WaitUntilAsync(() => first.AtB.Count(p => p.Type == "text") == textBeforeComposition + expectedEdits,
                     "ordered Vietnamese correction packets did not reach B over TLS");
                 string receivedText = "";
-                Packet[] receivedEdits = first.AtB.Where(p => p.Type == "text").ToArray();
+                Packet[] receivedEdits = first.AtB.Where(p => p.Type == "text").Skip(textBeforeComposition).ToArray();
                 foreach (Packet edit in receivedEdits)
                 {
                     Check(edit.Dx >= 0 && edit.Dx <= receivedText.Length, "TLS changed the correction's backspace count or order.");
@@ -166,8 +170,7 @@ internal static class Program
                         "A callback captured by the old session leaked packets into the new session.");
                     Check(!second.AtB.Any(p => p.Text == staleInput || p.Text == staleAudio), "New TLS peer received stale input/audio callbacks.");
                     AssertNoHooks(aInput, bInput);
-                    Call(b, "Disconnect");
-                    await WaitUntilAsync(() => Get<PeerConnection?>(a, "_peer") is null, "closing B did not clean up A after reconnect");
+                    await CheckCloseWhileUiPausedAsync(a, b, second, bInput);
                     AssertDisconnected(a, b);
                 }
 
@@ -244,11 +247,210 @@ internal static class Program
     private static void SendChat(MainForm form, string text) { Get<TextBox>(form, "_chat").Text = text; Call(form, "SendChat"); }
     private static string Log(MainForm form) => Get<RichTextBox>(form, "_log").Text;
     private static Dictionary<string, CheckBox> Checks(MainForm form) => Get<Dictionary<string, CheckBox>>(form, "_checks");
+
+    private static async Task CheckInboxPressureAsync()
+    {
+        var type = typeof(MainForm).Assembly.GetType("LanBridge.SessionInbox", throwOnError: true)!;
+        var inbox = Activator.CreateInstance(type, new object[] { 8 })!;
+        var write = type.GetMethod("TryWrite")!;
+        bool Enqueue(Packet packet) => (bool)write.Invoke(inbox, new object[] { packet })!;
+        bool accepted = true;
+        for (var index = 0; index < 4096; index++) accepted &= Enqueue(new Packet { Type = "move", X = index, Y = 123 });
+        var keyDown = new Packet { Type = "key", Key = 0x41, Down = true };
+        accepted &= Enqueue(keyDown);
+        for (var index = 0; index < 4096; index++) accepted &= Enqueue(new Packet { Type = "move", X = 10000 + index, Y = 456 });
+        var edit = new Packet { Type = "text", Dx = 2, Text = "tiếng Việt" };
+        var keyUp = new Packet { Type = "key", Key = 0x41, Down = false };
+        var buttonDown = new Packet { Type = "button", Button = "left", X = 14095, Y = 456, Down = true };
+        var buttonUp = new Packet { Type = "button", Button = "left", X = 14095, Y = 456, Down = false };
+        var leave = new Packet { Type = "leave" };
+        foreach (var packet in new[] { edit, keyUp, buttonDown, buttonUp, leave }) accepted &= Enqueue(packet);
+        Check(accepted, "An ordered inbox must coalesce thousands of adjacent mouse positions without overflowing.");
+        Check(Enqueue(new Packet { Type = "move", X = 20000 }) && Enqueue(new Packet { Type = "audio", Data = new byte[] { 1 } }),
+            "A full receive queue must tolerate disposable movement/audio instead of closing an otherwise healthy session.");
+        Check(!Enqueue(new Packet { Type = "key", Key = 0x42, Down = true }),
+            "A saturated queue must refuse critical input explicitly rather than silently dropping or overwriting it.");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(3));
+        var stream = (IAsyncEnumerable<Packet>)type.GetMethod("ReadAllAsync")!.Invoke(inbox, new object[] { deadline.Token })!;
+        await using var reader = stream.GetAsyncEnumerator(deadline.Token);
+        var expected = new[]
+        {
+            new Packet { Type = "move", X = 4095, Y = 123 }, keyDown,
+            new Packet { Type = "move", X = 14095, Y = 456 }, edit, keyUp, buttonDown, buttonUp, leave
+        };
+        foreach (var packet in expected)
+        {
+            Check(await reader.MoveNextAsync(), "The receive queue lost an ordered input boundary under pressure.");
+            Check(InputBoundary(reader.Current) == InputBoundary(packet),
+                "The receive queue coalesced across a keyboard, Unicode, button or leave boundary.");
+        }
+        type.GetMethod("Complete")!.Invoke(inbox, null);
+        Check(!Enqueue(new Packet { Type = "move" }) && !await reader.MoveNextAsync(),
+            "A completed session inbox must reject stale packets and finish its consumer.");
+    }
+
+    private static async Task CheckMinimizedSessionAsync(MainForm a, MainForm b, Session session,
+        InputRouter aInput, InputRouter bInput)
+    {
+        // Run the real input dispatcher on its own STA message pump, with its explicit test
+        // mode disabling every native hook and injection. The user's desktop stays untouched.
+        Call(bInput, "StartForTesting");
+        await ((Task)Call(bInput, "InvokeForTestingAsync", (Action)(() => { }))!);
+        AssertNoHooks(aInput, bInput);
+        var applied = new ConcurrentQueue<Packet>();
+        using var beginBurst = new ManualResetEventSlim();
+        using var reachedLeave = new ManualResetEventSlim();
+        var observer = typeof(InputRouter).GetProperty("PacketAppliedForTesting", Private)
+            ?? throw new MissingMemberException(nameof(InputRouter), "PacketAppliedForTesting");
+        observer.SetValue(bInput, (Action<Packet>)(packet =>
+        {
+            applied.Enqueue(packet);
+            if (packet.Type == "leave") reachedLeave.Set();
+        }));
+        var packets = new List<Packet> { new() { Type = "enter", Name = "Right", X = 10, Y = 20 } };
+        for (var group = 0; group < 16; group++)
+        {
+            for (var move = 0; move < 128; move++)
+                packets.Add(new Packet { Type = "move", X = group * 1000 + move, Y = 2000 + group });
+            packets.Add(new Packet { Type = "key", Key = 0x41, Scan = 0x1e, Down = true });
+            packets.Add(new Packet { Type = "text", Dx = group % 3, Text = "tiếng Việt " + group });
+            packets.Add(new Packet { Type = "key", Key = 0x41, Scan = 0x1e, Down = false });
+            packets.Add(new Packet { Type = "button", Button = "left", X = group * 1000 + 127, Y = 2000 + group, Down = true });
+            packets.Add(new Packet { Type = "button", Button = "left", X = group * 1000 + 127, Y = 2000 + group, Down = false });
+        }
+        packets.Add(new Packet { Type = "leave", Name = "Right" });
+        var marker = "MINIMIZED_SESSION_" + Guid.NewGuid().ToString("N");
+        Exception? sendError = null;
+        var sender = Task.Run(async () =>
+        {
+            try
+            {
+                beginBurst.Wait();
+                await session.A.SendAsync(new Packet { Type = "chat", Text = "BEFORE_" + marker });
+                foreach (var packet in packets) await session.A.SendAsync(packet);
+                await session.A.SendAsync(new Packet { Type = "chat", Text = marker });
+            }
+            catch (Exception error) { sendError = error; reachedLeave.Set(); }
+        });
+        bool inputContinued;
+        try
+        {
+            // Both handles remain hidden. WindowState exercises WinForms' minimize/restore
+            // lifecycle without activating a window or stealing the user's focus. The bounded
+            // pause reproduces animation/layout stalls, independently of Windows animations.
+            a.WindowState = b.WindowState = FormWindowState.Minimized;
+            Check(a.WindowState == FormWindowState.Minimized && b.WindowState == FormWindowState.Minimized
+                && !a.Visible && !b.Visible, "Minimization regression must minimize both hidden windows without showing or activating them.");
+            beginBurst.Set();
+            inputContinued = reachedLeave.Wait(TimeSpan.FromSeconds(3));
+        }
+        finally { beginBurst.Set(); a.WindowState = b.WindowState = FormWindowState.Normal; }
+        await sender.WaitAsync(TimeSpan.FromSeconds(8));
+        await ((Task)Call(bInput, "InvokeForTestingAsync", (Action)(() => { }))!);
+        observer.SetValue(bInput, null);
+        Check(sendError is null, "The TLS session closed while minimized and flooded with mouse movement: " + sendError?.Message);
+        Check(inputContinued && applied.Any(packet => packet.Type == "leave"),
+            "Remote input must continue on its own pump while the main UI thread is paused.");
+        Check(!session.A.IsClosed && !session.B.IsClosed, "Minimizing the window must not close either authenticated TLS peer.");
+        Check(ReferenceEquals(Get<PeerConnection?>(a, "_peer"), session.A)
+            && ReferenceEquals(Get<PeerConnection?>(b, "_peer"), session.B), "Minimization detached the current UI session.");
+        var actual = applied.ToArray();
+        var expectedCritical = packets.Where(packet => packet.Type != "move").Select(InputBoundary).ToArray();
+        Check(actual.Where(packet => packet.Type != "move").Select(InputBoundary).SequenceEqual(expectedCritical),
+            "Mouse coalescing dropped or reordered an enter, key, Unicode edit, button, or leave boundary.");
+        var keyDowns = actual.Select((packet, index) => (packet, index)).Where(item => item.packet.Type == "key" && item.packet.Down).ToArray();
+        Check(keyDowns.Length == 16, "The minimized session lost a keyboard boundary.");
+        for (var group = 0; group < keyDowns.Length; group++)
+        {
+            var latestMove = actual.Take(keyDowns[group].index).LastOrDefault(packet => packet.Type == "move");
+            Check(latestMove?.X == group * 1000 + 127 && latestMove.Y == 2000 + group,
+                "A coalesced mouse position crossed a following keyboard boundary.");
+        }
+        Check(!bInput.IsRemote, "The final leave did not release the receiver while the main window was minimized.");
+        await WaitUntilAsync(() => Log(b).Contains(marker, StringComparison.Ordinal), "A queued chat did not reach the restored receiver UI");
+        Check(Log(b).Contains("BEFORE_" + marker, StringComparison.Ordinal), "A cosmetic chat before the input burst was lost or held input behind the paused UI.");
+        for (var cycle = 0; cycle < 3; cycle++)
+        {
+            a.WindowState = FormWindowState.Minimized;
+            b.WindowState = FormWindowState.Minimized;
+            string toA = $"B_MINIMIZED_{cycle}_" + marker, toB = $"A_MINIMIZED_{cycle}_" + marker;
+            SendChat(a, toB); SendChat(b, toA);
+            await WaitUntilAsync(() => Log(a).Contains(toA, StringComparison.Ordinal) && Log(b).Contains(toB, StringComparison.Ordinal),
+                "Duplex chat stopped while both UI windows were minimized");
+            a.WindowState = b.WindowState = FormWindowState.Normal;
+            Check(!a.Visible && !b.Visible && !session.A.IsClosed && !session.B.IsClosed,
+                "A minimize/restore cycle showed a test window or closed the session.");
+        }
+        AssertNoHooks(aInput, bInput);
+    }
+
+    private static string InputBoundary(Packet packet) =>
+        $"{packet.Type}|{packet.Key}|{packet.Scan}|{packet.Flags}|{packet.Button}|{packet.Down}|{packet.Text}|{packet.Dx}|{packet.X}|{packet.Y}|{packet.Name}|{packet.Allow}";
+
+    private static async Task CheckCloseWhileUiPausedAsync(MainForm a, MainForm b, Session session, InputRouter receiver)
+    {
+        await session.A.SendAsync(new Packet { Type = "enter", Name = "Right", X = 100, Y = 200 });
+        await WaitUntilAsync(() => receiver.IsRemote, "Close regression did not enter the receiver's safe test session");
+        receiver.SetBlockLocalInput(true);
+        await ((Task)Call(receiver, "InvokeForTestingAsync", (Action)(() => { }))!);
+        Check(Get<bool>(receiver, "_blockLocal"), "Close regression did not enable the receiver's logical input lock.");
+        using var begin = new ManualResetEventSlim();
+        using var released = new ManualResetEventSlim();
+        string marker = "CLOSING_WITH_UI_PAUSED_" + Guid.NewGuid().ToString("N");
+        Exception? failure = null;
+        int lateInputsApplied = 0;
+        var observer = typeof(InputRouter).GetProperty("PacketAppliedForTesting", Private)!;
+        observer.SetValue(receiver, (Action<Packet>)(packet => { if (packet.Type == "enter" && packet.X == 60000) Interlocked.Increment(ref lateInputsApplied); }));
+        var closing = Task.Run(async () =>
+        {
+            begin.Wait();
+            try
+            {
+                // A UI-bound hello deliberately holds the ordered reader ahead of a late enter.
+                // Closing must cancel both before queued UI callbacks can re-enable input.
+                await session.A.SendAsync(new Packet { Type = "hello", Name = marker, Flags = 2, Width = 1920, Height = 1080 });
+                await session.A.SendAsync(new Packet { Type = "enter", Name = "Right", X = 60000, Y = 3333 });
+                var deadline = Stopwatch.StartNew();
+                while (!session.AtB.Any(packet => packet.Type == "enter" && packet.X == 60000))
+                {
+                    if (deadline.Elapsed > TimeSpan.FromSeconds(2)) throw new TimeoutException("Late input did not arrive before the close probe.");
+                    await Task.Delay(5);
+                }
+                session.A.Dispose();
+                deadline.Restart();
+                while (receiver.CanControl || receiver.IsRemote || Get<bool>(receiver, "_blockLocal"))
+                {
+                    if (deadline.Elapsed > TimeSpan.FromSeconds(2)) throw new TimeoutException("Closing peer did not release input while its UI was paused.");
+                    await Task.Delay(5);
+                }
+            }
+            catch (Exception error) { failure = error; }
+            finally { released.Set(); }
+        });
+        bool releasedDuringPause;
+        try
+        {
+            a.WindowState = b.WindowState = FormWindowState.Minimized;
+            begin.Set();
+            releasedDuringPause = released.Wait(TimeSpan.FromSeconds(3));
+        }
+        finally { begin.Set(); a.WindowState = b.WindowState = FormWindowState.Normal; }
+        await closing.WaitAsync(TimeSpan.FromSeconds(8));
+        Check(releasedDuringPause && failure is null, "A closed peer must release its input owner before the main UI resumes: " + failure?.Message);
+        await WaitUntilAsync(() => Get<PeerConnection?>(a, "_peer") is null && Get<PeerConnection?>(b, "_peer") is null,
+            "Network close did not clean up both UI sessions after restore");
+        await ((Task)Call(receiver, "InvokeForTestingAsync", (Action)(() => { }))!);
+        observer.SetValue(receiver, null);
+        Check(Volatile.Read(ref lateInputsApplied) == 0 && !receiver.CanControl && !receiver.IsRemote,
+            "Input queued by a closed session was applied or re-enabled control after its UI resumed.");
+    }
+
     private static void AssertNoHooks(params InputRouter[] routers)
     {
         foreach (var router in routers)
         {
-            Check(!Get<bool>(router, "_started"), "Session smoke must never call InputRouter.Start.");
+            Check(!Get<bool>(router, "_started") || !Get<bool>(router, "_nativeInputEnabled"),
+                "Session smoke may run only the explicit pump with native input disabled.");
             Check(Get<IntPtr>(router, "_mouseHook") == IntPtr.Zero && Get<IntPtr>(router, "_keyboardHook") == IntPtr.Zero,
                 "Session smoke must never install mouse/keyboard hooks.");
         }

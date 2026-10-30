@@ -6,7 +6,7 @@ namespace LanBridge;
 public sealed partial class MainForm
 {
     readonly DevicesPage _devicesPage = new();
-    readonly TabControl _tabs = new();
+    readonly WorkspaceTabs _tabs = new();
     readonly TabPage _deviceTab = new("Thiết bị"), _sessionTab = new("Phiên điều khiển"), _manualTab = new("Kết nối bằng mã");
     HostServer? _autoServer;
     LanDiscoveryService? _discovery;

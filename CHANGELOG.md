@@ -1,3 +1,12 @@
+# 0.3.1
+
+- Sửa lỗi khựng/ngắt phiên khi giao diện bận hoặc thu nhỏ: đưa hook và xử lý chuột/phím sang luồng STA có message loop riêng, bỏ vòng chờ giao diện trên đường xử lý đầu vào.
+- Gộp các vị trí chuột liên tiếp trong hàng đợi nhận; giữ nguyên phím, sửa chữ Unicode, nút, cuộn và ranh giới chuyển máy. Âm thanh nhận cũng được xử lý ngoài luồng giao diện.
+- Nhả đầu vào ngay trên luồng nhập khi mất kết nối dù cửa sổ đang bận; báo nguyên nhân cụ thể nếu hàng đợi thao tác quan trọng thực sự quá tải.
+- Làm mới giao diện tối, thẻ thiết bị và hộp xác nhận; giảm layout lặp khi resize, điều hướng và bố cục phiên dễ theo dõi hơn.
+- Bổ sung kiểm tra hồi quy thu nhỏ/tạm dừng giao diện qua TLS thật, thứ tự gói sau gộp chuột, độc lập luồng nhập và hủy thao tác của phiên cũ.
+- Script Publish đọc phiên bản từ project, tạo ZIP Windows và file SHA-256 tự động.
+
 # 0.3.0
 
 - Trang Thiết bị trong mạng: tự tìm các máy đang mở LanBridge, tên/IP, trạng thái bận, làm mới và xóa máy hết hạn.

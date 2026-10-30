@@ -15,10 +15,19 @@ try {
             Invoke-ProjectDotnet run --project "tests\$testProject\$testProject.csproj" -c Release
         }
     } elseif ($Task -eq 'Publish') {
-        $publishDirectory = 'release\LanBridge-0.3.0-win-x64'
+        [xml]$projectXml = Get-Content -LiteralPath src\LanBridge.csproj -Raw
+        $releaseVersion = [string]$projectXml.Project.PropertyGroup.Version
+        if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Project Version must be a three-part release number.' }
+        $publishDirectory = "release\LanBridge-$releaseVersion-win-x64"
         Invoke-ProjectDotnet publish src\LanBridge.csproj -c Release -r win-x64 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=None' -o $publishDirectory --nologo
         Copy-Item -LiteralPath README.md,TESTING.md,CHANGELOG.md,NAudio-LICENSE.txt,THIRD-PARTY-NOTICES.md -Destination $publishDirectory
         if (Test-Path -LiteralPath licenses) { Copy-Item -LiteralPath licenses -Destination $publishDirectory -Recurse -Force }
+        if (Test-Path -LiteralPath docs) { Copy-Item -LiteralPath docs -Destination $publishDirectory -Recurse -Force }
+        $packagePath = Join-Path $projectRoot "release\LanBridge-$releaseVersion-Windows-x64.zip"
+        Compress-Archive -Path (Join-Path $publishDirectory '*') -DestinationPath $packagePath -CompressionLevel Optimal -Force
+        $packageDigest = (Get-FileHash -LiteralPath $packagePath -Algorithm SHA256).Hash.ToLowerInvariant()
+        $checksumPath = Join-Path $projectRoot "release\LanBridge-$releaseVersion-SHA256SUMS.txt"
+        [System.IO.File]::WriteAllText($checksumPath, "$packageDigest  $([System.IO.Path]::GetFileName($packagePath))`n", [System.Text.UTF8Encoding]::new($false))
     } else {
         Invoke-ProjectDotnet build src\LanBridge.csproj -c Release --nologo
     }

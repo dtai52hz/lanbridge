@@ -561,6 +561,8 @@ public sealed class PeerConnection : IDisposable
         catch { Close("Đã dừng phiên điều khiển."); }
     }
 
+    internal void Abort(string reason) => Close(reason);
+
     private void Close(string? reason)
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;

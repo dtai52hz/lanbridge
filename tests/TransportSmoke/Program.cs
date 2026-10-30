@@ -84,8 +84,12 @@ using (var host = new HostServer(IPAddress.Loopback, 0))
     await Task.Delay(TimeSpan.FromSeconds(4.1));
     Check(!controller.IsClosed && !remote.IsClosed, "Healthy heartbeat disconnected the session.");
     var closed = Signal<bool>();
+    var localReason = Signal<string?>();
     remote.Closed += _ => closed.TrySetResult(true);
-    controller.Dispose();
+    controller.Closed += reason => localReason.TrySetResult(reason);
+    controller.Abort("Hàng đợi nhận quá tải; đã nhả chuột và bàn phím.");
+    Check(await localReason.Task.WaitAsync(TimeSpan.FromSeconds(2)) == "Hàng đợi nhận quá tải; đã nhả chuột và bàn phím.",
+        "An overloaded session must retain its actionable local disconnect reason.");
     await closed.Task.WaitAsync(TimeSpan.FromSeconds(2));
     var reaccepted = Signal<PeerConnection>();
     host.Connected += peer => reaccepted.TrySetResult(peer);

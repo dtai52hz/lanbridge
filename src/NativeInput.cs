@@ -6,7 +6,8 @@ using System.Text;
 namespace LanBridge;
 
 /// <summary>
-/// Windows keyboard/mouse bridge. Start on the WinForms UI thread, after its message loop exists.
+/// Windows keyboard/mouse bridge. Start creates its own STA message-loop thread so window
+/// animations, dragging, dialogs and other UI work cannot stall the global low-level hooks.
 /// No hook or input injection is performed by the constructor. Incoming packets must already have
 /// passed the connection's authentication and permission checks. Send is dispatched, in order,
 /// on a worker thread; it must enqueue network work and return promptly.
@@ -24,7 +25,7 @@ namespace LanBridge;
 /// </remarks>
 public sealed class InputRouter : IDisposable
 {
-    public Action<Packet>? Send { get; set; }
+    public Action<Packet>? Send { get => Volatile.Read(ref _send); set => Volatile.Write(ref _send, value); }
     public Action<bool>? RemoteControlChanged { get; set; }
     public Action? EmergencyReleased { get; set; }
     public string? LastError { get; private set; }
@@ -49,11 +50,18 @@ public sealed class InputRouter : IDisposable
         set => OnOwner(() => { if (_composer.Mode != value) { ReleaseHeldInputs(); _textKeys.Clear(); _composer.Mode = value; } });
     }
 
-    private bool _controller, _allowed, _remote, _blockLocal, _disposed, _started;
+    private volatile bool _controller, _allowed, _remote, _blockLocal, _disposed, _started;
+    private Action<Packet>? _send;
     private IntPtr _mouseHook, _keyboardHook;
     private readonly HookProc _mouseProc, _keyboardProc;
     private SynchronizationContext? _context;
     private int _ownerThread;
+    private readonly object _lifecycle = new();
+    private Thread? _worker;
+    private ApplicationContext? _application;
+    private TaskCompletionSource? _startup;
+    private int _disposeRequested;
+    private bool _nativeInputEnabled;
     private System.Windows.Forms.Timer? _timer;
     private Rectangle _bounds;
     private Point _lastLocalPoint, _anchor;
@@ -83,16 +91,76 @@ public sealed class InputRouter : IDisposable
         _keyboardProc = KeyboardHook;
     }
 
-    public void Start()
+    public void Start() => StartDispatcher(true);
+
+    // Uses the real, independent message loop without touching physical input or installing hooks.
+    internal void StartForTesting() => StartDispatcher(false);
+    internal Action<Packet>? PacketAppliedForTesting { get; set; }
+    internal Task InvokeForTestingAsync(Action action) => OnOwnerAsync(action, CancellationToken.None);
+
+    private void StartDispatcher(bool nativeInputEnabled)
     {
-        ObjectDisposedException.ThrowIf(_disposed, this);
-        if (_started) return;
-        if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows input hooks are required.");
+        TaskCompletionSource startup;
+        Thread worker;
+        lock (_lifecycle)
+        {
+            ObjectDisposedException.ThrowIf(_disposed || Volatile.Read(ref _disposeRequested) != 0, this);
+            if (_startup is null)
+            {
+                if (!OperatingSystem.IsWindows()) throw new PlatformNotSupportedException("Windows input hooks are required.");
+                _startup = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                var signal = _startup;
+                _worker = new Thread(() => RunDispatcher(nativeInputEnabled, signal))
+                { IsBackground = true, Name = "LanBridge input" };
+                _worker.SetApartmentState(ApartmentState.STA);
+                _worker.Start();
+            }
+            startup = _startup;
+            worker = _worker!;
+        }
+        // There are no hooks on the caller's UI thread while this short initialization completes.
+        try { startup.Task.GetAwaiter().GetResult(); }
+        catch
+        {
+            worker.Join(TimeSpan.FromSeconds(2));
+            lock (_lifecycle)
+                if (_worker == worker) { _worker = null; _startup = null; }
+            throw;
+        }
+    }
+
+    private void RunDispatcher(bool nativeInputEnabled, TaskCompletionSource startup)
+    {
         _ownerThread = Environment.CurrentManagedThreadId;
-        _context = SynchronizationContext.Current ?? new WindowsFormsSynchronizationContext();
+        try
+        {
+            ObjectDisposedException.ThrowIf(Volatile.Read(ref _disposeRequested) != 0, this);
+            _application = new ApplicationContext();
+            _context = new WindowsFormsSynchronizationContext();
+            SynchronizationContext.SetSynchronizationContext(_context);
+            InitializeInput(nativeInputEnabled);
+            // Signal from inside the running pump, not just after creating the thread.
+            _context.Post(_ => startup.TrySetResult(), null);
+            Application.Run(_application);
+        }
+        catch (Exception error) { startup.TrySetException(error); }
+        finally
+        {
+            StopHooks();
+            _application?.Dispose();
+            _application = null;
+            _context = null;
+            _started = false;
+        }
+    }
+
+    private void InitializeInput(bool nativeInputEnabled)
+    {
+        _nativeInputEnabled = nativeInputEnabled;
         _bounds = SystemInformation.VirtualScreen;
         _lastLocalPoint = Cursor.Position;
         _boundsReadAt = Environment.TickCount64;
+        if (!nativeInputEnabled) { _started = true; return; }
         // Remember modifiers already held when the visible application enables the hooks.
         foreach (var vk in new[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C })
             if ((GetAsyncKeyState(vk) & 0x8000) != 0)
@@ -128,14 +196,50 @@ public sealed class InputRouter : IDisposable
     public void SetBlockLocalInput(bool enabled) => OnOwner(() =>
         _blockLocal = enabled && !_controller && _allowed);
 
-    /// <summary>May be called by a receiver thread. Injection is marshalled onto the hook's UI thread.</summary>
+    /// <summary>May be called by a receiver thread. Injection is marshalled onto the independent input thread.</summary>
     public void ApplyRemote(Packet packet)
     {
         ArgumentNullException.ThrowIfNull(packet);
-        OnOwner(() => ApplyCore(packet));
+        OnOwner(() => ApplyPacketCore(packet));
+    }
+
+    /// <summary>Completes after the input thread applies this packet, preserving receiver order without waiting for the UI.</summary>
+    public Task ApplyRemoteAsync(Packet packet, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(packet);
+        return OnOwnerAsync(() => ApplyPacketCore(packet), cancellationToken);
+    }
+
+    private void ApplyPacketCore(Packet packet)
+    {
+        try
+        {
+            ApplyCore(packet);
+            if (LastError is not null) ReleaseCore(true);
+            if (!_nativeInputEnabled) PacketAppliedForTesting?.Invoke(packet);
+        }
+        catch
+        {
+            // Release on the input thread immediately, even when an error dialog or the UI is busy.
+            ReleaseCore(true);
+            throw;
+        }
     }
 
     public void ReleaseRemote(bool notify = true) => OnOwner(() => ReleaseCore(notify));
+
+    /// <summary>Releases a closed session on the input thread; an old callback cannot revoke a newer session.</summary>
+    public void ReleaseSession(Action<Packet> sender)
+    {
+        ArgumentNullException.ThrowIfNull(sender);
+        OnOwner(() =>
+        {
+            if (!ReferenceEquals(Send, sender)) return;
+            _allowed = false;
+            ReleaseCore(false);
+            _blockLocal = false;
+        });
+    }
 
     public void ForceReleaseAll() => OnOwner(ReleaseHeldInputs);
 
@@ -368,10 +472,7 @@ public sealed class InputRouter : IDisposable
             bool control = HasPhysical(0x11, 0xA2, 0xA3), alt = HasPhysical(0x12, 0xA4, 0xA5);
             if (key.Key == 0x7B && down && control && alt)
             {
-                _emergencyChord = true;
-                ReleaseCore(true);
-                _blockLocal = false;
-                Post(() => EmergencyReleased?.Invoke());
+                EmergencyReleaseCore();
                 return CallNextHookEx(_keyboardHook, code, message, data);
             }
             if (_emergencyChord)
@@ -389,6 +490,17 @@ public sealed class InputRouter : IDisposable
 
     private bool HasPhysical(int generic, int left, int right) =>
         _physicalKeys.ContainsKey(generic) || _physicalKeys.ContainsKey(left) || _physicalKeys.ContainsKey(right);
+
+    private void EmergencyReleaseCore()
+    {
+        _emergencyChord = true;
+        // The person at B revokes control immediately; the UI may be busy and publish the
+        // permission change later. A new enter packet must not undo this physical escape.
+        if (!_controller) _allowed = false;
+        ReleaseCore(true);
+        _blockLocal = false;
+        Post(() => EmergencyReleased?.Invoke());
+    }
 
     private static bool IsShift(int key) => key is 0x10 or 0xA0 or 0xA1;
     private static bool IsShortcutModifier(int key) => key is 0x11 or 0x12 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C;
@@ -629,7 +741,7 @@ public sealed class InputRouter : IDisposable
 
     private void InjectBatch(NativeInput[] inputs)
     {
-        if (!_started || inputs.Length == 0) return;
+        if (!_started || !_nativeInputEnabled || inputs.Length == 0) return;
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length)
             LastError = "Windows từ chối thao tác nhập. Hãy chạy hai ứng dụng với cùng mức quyền; UAC/desktop bảo mật không hỗ trợ.";
     }
@@ -685,8 +797,33 @@ public sealed class InputRouter : IDisposable
     }
     private void Post(Action action)
     {
-        if (_context is null) { if (!_disposed) action(); return; }
-        _context.Post(_ => { if (!_disposed) action(); }, null);
+        var context = _context;
+        if (context is null) { if (!_disposed) action(); return; }
+        try { context.Post(_ => { if (!_disposed) action(); }, null); }
+        catch (InvalidAsynchronousStateException) when (_disposed || Volatile.Read(ref _disposeRequested) != 0) { }
+    }
+    private Task OnOwnerAsync(Action action, CancellationToken cancellationToken)
+    {
+        if (cancellationToken.IsCancellationRequested) return Task.FromCanceled(cancellationToken);
+        if (_disposed) return Task.CompletedTask;
+        var context = _context;
+        if (context is null || Environment.CurrentManagedThreadId == _ownerThread)
+        {
+            try { action(); return Task.CompletedTask; }
+            catch (Exception error) { return Task.FromException(error); }
+        }
+        var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        try
+        {
+            context.Post(_ =>
+            {
+                if (_disposed || cancellationToken.IsCancellationRequested) { completion.TrySetCanceled(); return; }
+                try { action(); completion.TrySetResult(); }
+                catch (Exception error) { completion.TrySetException(error); }
+            }, null);
+        }
+        catch (InvalidAsynchronousStateException) { completion.TrySetCanceled(); }
+        return completion.Task.WaitAsync(cancellationToken);
     }
     private void RecoverHookError(Exception error)
     {
@@ -697,22 +834,38 @@ public sealed class InputRouter : IDisposable
 
     public void Dispose()
     {
-        if (_disposed) return;
-        if (_context is not null && Environment.CurrentManagedThreadId != _ownerThread)
+        if (Interlocked.Exchange(ref _disposeRequested, 1) != 0) return;
+        var worker = _worker;
+        var context = _context;
+        if (context is not null && Environment.CurrentManagedThreadId != _ownerThread)
         {
-            // Hooks belong to the message-loop thread. Avoid tearing down its timers off-thread.
-            Post(Dispose);
+            // Teardown belongs to the same dedicated thread as installation and input state.
+            try { context.Post(_ => DisposeOnOwner(), null); }
+            catch (InvalidAsynchronousStateException) { }
+            worker?.Join(TimeSpan.FromSeconds(2));
             return;
         }
+        DisposeOnOwner();
+    }
+
+    private void DisposeOnOwner()
+    {
+        if (_disposed) return;
         ReleaseCore(true);
+        StopHooks();
+        _started = false;
+        _disposed = true;
+        _application?.ExitThread();
+    }
+
+    private void StopHooks()
+    {
         _timer?.Stop();
         _timer?.Dispose();
         _timer = null;
         if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
         if (_keyboardHook != IntPtr.Zero) UnhookWindowsHookEx(_keyboardHook);
         _mouseHook = _keyboardHook = IntPtr.Zero;
-        _started = false;
-        _disposed = true;
         GC.KeepAlive(_mouseProc);
         GC.KeepAlive(_keyboardProc);
     }

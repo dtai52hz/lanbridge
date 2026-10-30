@@ -89,4 +89,5 @@ using (var delivered = new ManualResetEventSlim())
 EdgeChecks.Run(Check);
 UnicodeChecks.Run(Check);
 KeyboardRouteChecks.Run(Check);
+DispatcherChecks.Run(Check);
 Console.WriteLine($"Native input smoke passed: {assertions} assertions; no hooks installed and no input injected.");
