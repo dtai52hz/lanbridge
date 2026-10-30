@@ -22,9 +22,24 @@ Kiểm chứng bổ sung đã thực hiện trong lần tạo dự án: FFmpeg g
 
 Hồi quy di chuyển/cuộn ở 0.5.1 đã được chạy đối chiếu mã 0.5.0 trong thư mục riêng: trường hợp 1.000 mẫu tạo 1.041 gói và đóng cả hai đầu TLS khi luồng nhập đang tạm dừng. Bản sửa giữ kết nối, còn 73 gói và 9 lần chuyển sang luồng nhập cho cả trường hợp 1.000 và 8.000 mẫu. Các số này mô tả tải tổng hợp và cách gộp, không phải số đo độ trễ trên LAN thật.
 
+Hồi quy tương tác 0.5.2 đi qua phương thức nhận mẫu chuột của InputRouter, xen 8.000 mẫu với click/phím/cuộn: không yêu cầu lệnh native nào trong giai đoạn rê chuột, nhưng vẫn yêu cầu đúng một lần đặt con trỏ khi vào/ra máy B. Kiểm tra `Stopwatch` cho nhịp gửi dưới bước đồng hồ Windows cũ. Hai form ẩn gửi liên tục move/click/phím qua TLS, chèn clipboard trong lúc UI nhận dừng 900 ms: thao tác nhập phải hoàn tất trước khi UI chạy lại, không mất ranh giới quan trọng. Mã 0.5.1 tái hiện p95 khoảng 923 ms trong kịch bản clipboard/UI này; thời gian chỉ là phép đo của một lần chạy tổng hợp.
+
+Cùng kịch bản tương tác được thử khi khóa nhận file đang bị giữ để mô phỏng I/O chậm. Có kiểm tra bỏ clipboard cũ đã xếp hàng trước khi B thu hồi rồi cấp lại quyền, và chấp nhận dữ liệu A nhận ngay sau gói cấp quyền mới của B. Các dịch vụ file được giữ theo phiên riêng; thư mục nhận trong kiểm tra là thư mục tạm. Hàng đợi chính giới hạn 512 gói/32 MiB, hàng đợi nền 128 gói/16 MiB; giới hạn byte được kiểm tra cả khi thay vị trí chuột liền nhau.
+
+Lệnh tắt ghi hình đang chờ sau file I/O phải còn hiệu lực sau khi một quyền khác bị thu hồi; kiểm tra chỉ đặt cờ trạng thái giả, không khởi tạo recorder. Cả bật và tắt Màn che/Khóa đầu vào vẫn đi qua ranh giới có thứ tự với input: kiểm tra phân luồng Màn che bằng helper dùng trong production, và gửi lệnh khóa cùng phím qua TLS khi UI dừng để xác minh phím không vượt lệnh khóa. Không bật màn che thật hoặc chặn chuột/phím vật lý.
+
+Đo bổ sung phần truyền độc lập (không hook/SendInput/clipboard thật):
+
+```powershell
+& .\.tools\dotnet\dotnet.exe run --project tests\TransportSmoke -c Release -- --latency-only
+& .\.tools\dotnet\dotnet.exe run --project tests\TransportSmoke -c Release -- --latency-shaped
+```
+
+`--latency-only` in p50/p95/p99 từ enqueue tới callback nhận TLS localhost, khi chỉ có input, kèm move và kèm bulk 48 KiB có ACK. `--latency-shaped` đặt relay TCP loopback giới hạn tốc độ để so sánh bulk có/không ACK. Hai chế độ không thuộc bộ Test mặc định và không đo độ trễ vật lý giữa hai PC. Truyền file thủ công hiện chưa có ACK từng khối như clipboard; khi mạng chậm, dữ liệu trên cùng TCP có thể làm tăng thời gian chờ input.
+
 ## Thử trên hai máy thật
 
-1. Mở bản 0.5.1 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
+1. Mở bản 0.5.2 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
 2. Chọn đúng vị trí B; thử chuyển ngay sang B, trở lại A, sang B tiếp mà không đợi và hotkey Ctrl+Alt+F12. Thử trái/phải, cuộn, middle/X buttons và gõ trong Notepad trên B. Trên A chọn Telex gõ `tieengs Vieetj`, VNI gõ `tie6ng1 Vie6t5`; cả hai cần ra `tiếng Việt`. Thử Backspace, chữ hoa, Ctrl+C/V/Z, Shift+mũi tên, Shift+click và chuyển sang Phím gốc. Tắt bộ gõ ngoài nếu can thiệp; không cần UniKey B cho chế độ tích hợp.
 3. Trong lúc giữ Shift hoặc nút chuột trên B, rút mạng hoặc ngắt kết nối. Kiểm tra A lấy lại chuột và B không còn phím/nút bị giữ.
 4. Trên B tắt quyền Chuột/phím khi A đang điều khiển. Xác minh A nhận lại chuột và không tiếp tục thao tác được B cho tới khi B bật quyền lại.

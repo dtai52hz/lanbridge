@@ -38,6 +38,17 @@ internal static class PointerPipelineChecks
             "Pacing replayed stale positions instead of selecting the newest position on each cadence.");
         check(!pacer.HasPending, "An idle mouse must not leave an unsent final position behind.");
 
+        var preciseClock = new PointerMovePacer();
+        var coarseClock = new PointerMovePacer();
+        int preciseMoves = 0, coarseMoves = 0;
+        for (int report = 0; report < 1000; report++)
+        {
+            if (preciseClock.Offer(new Packet { Type = "move", X = report }, report) is not null) preciseMoves++;
+            if (coarseClock.Offer(new Packet { Type = "move", X = report }, report / 16 * 16) is not null) coarseMoves++;
+        }
+        check(preciseMoves == 125 && coarseMoves == 63,
+            "A 16 ms source clock halves nominal 125 Hz motion; pacing must use the high-resolution monotonic capture clock.");
+
         pacer.Clear();
         var mixed = new List<Packet>();
         var expectedWheels = new List<Packet>();
@@ -167,8 +178,8 @@ internal static class PointerPipelineChecks
                 pacer.Clear();
                 // Seed the pure clock ahead so the critical barrier is tested deterministically,
                 // even if the test process is preempted between its two capture calls.
-                pacer.Offer(new Packet { Type = "move", X = x - 1, Y = 11 }, Environment.TickCount64 + 1000);
-                pacer.Offer(new Packet { Type = "move", X = x, Y = 12 }, Environment.TickCount64 + 1001);
+                pacer.Offer(new Packet { Type = "move", X = x - 1, Y = 11 }, InputRouter.PointerClockMilliseconds() + 1000);
+                pacer.Offer(new Packet { Type = "move", X = x, Y = 12 }, InputRouter.PointerClockMilliseconds() + 1001);
                 Queue.Invoke(router, [new Packet { Type = type, X = x, Y = 12, Dy = -120, Button = "left", Down = true }]);
                 check(!pacer.HasPending, "A pointer action must consume the matching source position immediately.");
             }).GetAwaiter().GetResult();
@@ -179,10 +190,10 @@ internal static class PointerPipelineChecks
         router.InvokeForTestingAsync(() =>
         {
             var pacer = (PointerMovePacer)typeof(InputRouter).GetField("_movePacer", Private)!.GetValue(router)!;
-            pacer.Offer(new Packet { Type = "move", X = 2000 }, Environment.TickCount64 + 2000);
+            pacer.Offer(new Packet { Type = "move", X = 2000 }, InputRouter.PointerClockMilliseconds() + 2000);
             router.ReleaseRemote(false);
             check(!pacer.HasPending, "A return or closed session must cancel its pending motion.");
-            check(pacer.Offer(new Packet { Type = "move", X = 2001 }, Environment.TickCount64) is not null,
+            check(pacer.Offer(new Packet { Type = "move", X = 2001 }, InputRouter.PointerClockMilliseconds()) is not null,
                 "Crossing again on the same connection must reset pacing and send the first position immediately.");
         }).GetAwaiter().GetResult();
     }

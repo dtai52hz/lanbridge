@@ -33,13 +33,16 @@ public sealed partial class MainForm : Form
     bool _syncChecks, _closing, _audioOn, _recordingOn, _blockingOn, _privacyOn, _connecting;
     volatile bool _helloReceived, _sessionIsHost;
     volatile Permissions _sessionPermissions = new();
+    readonly object _permissionStateGate = new();
+    long _filesPermissionEpoch, _clipboardPermissionEpoch, _audioPermissionEpoch, _featuresPermissionEpoch;
     bool IsHost => _role.SelectedIndex == 1;
     readonly string _receivedDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LanBridge");
     readonly string _recordingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "LanBridge");
 
-    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null)
+    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null, string? receivedDirectory = null)
     {
         _preview = preview;
+        if (receivedDirectory != null) _receivedDirectory = Path.GetFullPath(receivedDirectory);
         _clipboard = clipboard ?? new WindowsClipboardAccess();
         _clipboardCacheDirectory = clipboardCacheDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LanBridge", "Clipboard");
         Text = "LanBridge · Một bộ chuột phím, hai máy tính";
@@ -47,7 +50,7 @@ public sealed partial class MainForm : Form
         Size = new Size(1120, 860); MinimumSize = new Size(1060, 780); StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
         _input.RemoteControlChanged = remote => Ui(() => { _remoteState.Text = remote ? "ĐANG ĐIỀU KHIỂN MÁY B" : (_peer != null ? "CHUỘT ĐANG Ở MÁY A" : "CHƯA CÓ PHIÊN KẾT NỐI"); _remoteState.ForeColor = remote ? Accent : Muted; if (remote && _input.LastError is { } error) { Log(error); Emergency(); } });
-        _input.EmergencyReleased = () => Ui(Emergency);
+        _input.EmergencyReleased = () => { Interlocked.Increment(ref _featuresPermissionEpoch); Ui(Emergency); };
         _audio.Error = message => Ui(() => { _audio.StopCapture(); _audio.StopPlayback(); Log("Âm thanh: " + message); _audioOn = false; UpdateFeatureButtons(); if (IsHost) Send(new Packet { Type = "feature-state", Name = "audio", Allow = false }); });
         _recorder.Error = message => Ui(() => { Log("Ghi hình: " + message); _recordingOn = false; UpdateFeatureButtons(); Send(new Packet { Type = "feature-state", Name = "recording", Allow = false }); });
         _clipboardTimer.Tick += (_, _) => SyncClipboard(); _clipboardTimer.Start();
@@ -97,18 +100,29 @@ public sealed partial class MainForm : Form
     void AttachPeer(PeerConnection peer)
     {
         if (_closing || _peer != null) { peer.Dispose(); return; }
-        _peer = peer; _helloReceived = false; _sessionIsHost = IsHost; _session = new(); var session = _session; var token = session.Token;
+        _peer = peer; _helloReceived = false; _sessionIsHost = IsHost; bool sessionIsHost = IsHost; _session = new(); var session = _session; var token = session.Token;
         Action<Packet> inputSender = packet => peer.TrySend(packet);
         _input.Send = inputSender; _audio.Send = packet => peer.TrySend(packet);
         ClipboardFiles? sessionClipboardFiles = null;
         ClipboardImages? sessionClipboardImages = null;
-        _inbox = new SessionInbox();
+        FileTransfer? sessionFiles = null;
+        _inbox = new SessionInbox(512, 32 * 1024 * 1024);
         var inbox = _inbox;
-        peer.Received += packet => { if (!token.IsCancellationRequested && !inbox.TryWrite(packet)) peer.Abort("Hàng đợi xử lý đã đầy; phiên được dừng để nhả phím và chuột."); };
+        // Disk writes, clipboard STA/OLE calls, media initialization and network ACKs
+        // use their own bounded FIFO. They must never hold subsequent clicks or keys.
+        var background = new SessionInbox(128, 16 * 1024 * 1024);
+        peer.Received += packet =>
+        {
+            var item = CaptureSessionPacket(packet);
+            if (!token.IsCancellationRequested && !inbox.TryWriteSession(item))
+                peer.Abort("Hàng đợi xử lý đã đầy; phiên được dừng để nhả phím và chuột.");
+        };
         peer.Closed += reason =>
         {
             try { session.Cancel(); } catch (ObjectDisposedException) { }
             inbox.Complete();
+            background.Complete();
+            sessionFiles?.Dispose();
             sessionClipboardFiles?.Dispose();
             sessionClipboardImages?.Dispose();
             // Release on the input pump even while the main window is busy/minimized.
@@ -117,6 +131,7 @@ public sealed partial class MainForm : Form
             Ui(() => { if (_peer == peer) { Log("Phiên đã đóng" + (reason == null ? "." : ": " + reason)); Disconnect(); } });
         };
         _files = new FileTransfer(_receivedDirectory, p => peer.SendAsync(p, token), message => Ui(() => Log(message)));
+        sessionFiles = _files;
         try { AttachClipboardFiles(peer, token); }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         { _clipboardFiles = null; Log("Chưa bật được clipboard file: " + error.Message); }
@@ -133,14 +148,45 @@ public sealed partial class MainForm : Form
         {
             try
             {
+                await foreach (var batch in background.ReadBatchesAsync(token))
+                    foreach (var item in batch)
+                    {
+                        if (token.IsCancellationRequested) return;
+                        if (BackgroundPacketIsCurrent(item))
+                            await HandlePacket(item, token, sessionFiles, sessionClipboardFiles, sessionClipboardImages);
+                    }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { peer.Abort("Xử lý dữ liệu nền: " + ex.Message); }
+        }, token);
+        Task.Run(async () =>
+        {
+            try
+            {
                 await foreach (var batch in inbox.ReadBatchesAsync(token))
                 {
                     for (int index = 0; index < batch.Count;)
                     {
-                        if (!IsInputPacket(batch[index])) { await HandlePacket(batch[index++], token, sessionClipboardFiles, sessionClipboardImages); continue; }
+                        if (!IsInputPacket(batch[index].Packet))
+                        {
+                            var item = batch[index++];
+                            if (IsInputBarrier(item.Packet))
+                                await HandlePacket(item, token, sessionFiles, sessionClipboardFiles, sessionClipboardImages);
+                            else
+                            {
+                                // A receives the authority's permission snapshots in this same
+                                // ordered stream. Data after a grant must see that grant even
+                                // when both frames arrived before its UI callback ran. B keeps
+                                // local arrival epochs so revoke/re-enable cannot revive old work.
+                                if (!sessionIsHost) item = CaptureSessionPacket(item.Packet);
+                                if (!background.TryWriteSession(item))
+                                    throw new IOException("Hàng đợi dữ liệu nền đã đầy; phiên được dừng để nhả phím và chuột.");
+                            }
+                            continue;
+                        }
                         int start = index;
-                        while (index < batch.Count && IsInputPacket(batch[index])) index++;
-                        await HandleInputPackets(start == 0 && index == batch.Count ? batch : batch.GetRange(start, index - start), token);
+                        while (index < batch.Count && IsInputPacket(batch[index].Packet)) index++;
+                        await HandleInputPackets(batch.GetRange(start, index - start).Select(item => item.Packet).ToList(), token);
                     }
                 }
             }
@@ -156,25 +202,31 @@ public sealed partial class MainForm : Form
         if (!IsHost) Log("Bộ gõ mặc định: Telex tích hợp. Gõ tieengs Vieetj → tiếng Việt. Chọn VNI hoặc Phím gốc trong ô Gõ.");
     }
 
-    async Task HandlePacket(Packet p, CancellationToken token, ClipboardFiles? clipboardFiles, ClipboardImages? clipboardImages)
+    SessionPacket CaptureSessionPacket(Packet packet)
     {
+        lock (_permissionStateGate) return new(packet, _sessionPermissions,
+            Interlocked.Read(ref _filesPermissionEpoch), Interlocked.Read(ref _clipboardPermissionEpoch),
+            Interlocked.Read(ref _audioPermissionEpoch), Interlocked.Read(ref _featuresPermissionEpoch));
+    }
+
+    async Task HandlePacket(SessionPacket item, CancellationToken token, FileTransfer? files, ClipboardFiles? clipboardFiles, ClipboardImages? clipboardImages)
+    {
+        var p = item.Packet;
         if (token.IsCancellationRequested) return;
         if (p.Type.StartsWith("clipboard-image-", StringComparison.Ordinal))
         {
-            if (clipboardImages != null) await clipboardImages.HandleAsync(p, _helloReceived && _clipboardImagesCapable && _sessionPermissions.Clipboard);
+            if (clipboardImages != null) await clipboardImages.HandleAsync(p, _helloReceived && _clipboardImagesCapable && item.Permissions?.Clipboard == true && _sessionPermissions.Clipboard);
             return;
         }
         if (p.Type.StartsWith("clipboard-files-", StringComparison.Ordinal))
         {
-            if (clipboardFiles != null) await clipboardFiles.HandleAsync(p, _helloReceived && _clipboardFilesCapable && _sessionPermissions.Clipboard && _sessionPermissions.Files);
+            if (clipboardFiles != null) await clipboardFiles.HandleAsync(p, _helloReceived && _clipboardFilesCapable && item.Permissions?.Clipboard == true && item.Permissions.Files && _sessionPermissions.Clipboard && _sessionPermissions.Files);
             return;
         }
-        if (p.Type.StartsWith("file-", StringComparison.Ordinal)) { var files = _files; if (files != null) await files.HandleAsync(p, _sessionPermissions.Files); return; }
-        // Input is dispatched above in small consecutive batches. Other packets
-        // remain ordered barriers; none can be overtaken by a later input batch.
+        if (p.Type.StartsWith("file-", StringComparison.Ordinal)) { if (files != null) await files.HandleAsync(p, item.Permissions?.Files == true && _sessionPermissions.Files); return; }
         if (p.Type is "audio-format" or "audio" or "audio-stop")
         {
-            if (!_sessionIsHost && _helloReceived && _sessionPermissions.Audio) _audio.Handle(p);
+            if (!_sessionIsHost && _helloReceived && item.Permissions?.Audio == true && _sessionPermissions.Audio) _audio.Handle(p);
             return;
         }
         // These are visual notifications, so a minimized/busy window must not
@@ -197,6 +249,7 @@ public sealed partial class MainForm : Form
         await OnUi(() =>
         {
             if (_peer == null || token.IsCancellationRequested) return;
+            if (p.Type is not ("hello" or "permissions") && !BackgroundPacketIsCurrent(item)) return;
             switch (p.Type)
             {
                 case "hello":
@@ -207,14 +260,40 @@ public sealed partial class MainForm : Form
                     _clipboardImagesCapable = p.ClipboardImagesVersion == ClipboardImages.ProtocolVersion;
                     _helloReceived = true; _devicesPage.SetSessionState(true, p.Name); ApplyPermissions(); break;
                 case "permissions" when !IsHost && p.Permissions != null: _permissions = p.Permissions; ApplyPermissions(); break;
-                case "clipboard": ReceiveClipboardText(p, token); break;
-                case "feature" when IsHost: SetFeature(p.Name, p.Allow); break;
-                case "restart" when IsHost && _permissions.Restart: ConfirmRestart(); break;
+                case "clipboard" when item.Permissions?.Clipboard == true: ReceiveClipboardText(p, token); break;
+                case "feature" when IsHost && (!p.Allow || FeatureWasAllowed(p.Name, item.Permissions)): SetFeature(p.Name, p.Allow); break;
+                case "restart" when IsHost && item.Permissions?.Restart == true && _permissions.Restart: ConfirmRestart(); break;
             }
         }, token);
     }
 
+    bool BackgroundPacketIsCurrent(SessionPacket item)
+    {
+        string type = item.Packet.Type;
+        bool clipboard = type == "clipboard" || type.StartsWith("clipboard-", StringComparison.Ordinal);
+        bool files = type.StartsWith("file-", StringComparison.Ordinal) || type.StartsWith("clipboard-files-", StringComparison.Ordinal);
+        bool audio = type is "audio" or "audio-format" or "audio-stop";
+        // An old enable/restart must not survive an emergency or revocation. An
+        // OFF request remains safe and necessary: dropping it could keep audio
+        // capture or recording active merely because another permission changed.
+        bool feature = type == "restart" || (type == "feature" && item.Packet.Allow);
+        return (!files || item.FilesEpoch == Interlocked.Read(ref _filesPermissionEpoch))
+            && (!clipboard || item.ClipboardEpoch == Interlocked.Read(ref _clipboardPermissionEpoch))
+            && (!audio || item.AudioEpoch == Interlocked.Read(ref _audioPermissionEpoch))
+            && (!feature || item.FeaturesEpoch == Interlocked.Read(ref _featuresPermissionEpoch));
+    }
+
+    static bool FeatureWasAllowed(string? feature, Permissions? permissions) => permissions != null && (feature switch
+    {
+        "audio" => permissions.Audio, "recording" => permissions.Recording,
+        "block" => permissions.BlockInput && permissions.Input, "privacy" => permissions.Privacy, _ => false
+    });
+
     static bool IsInputPacket(Packet packet) => packet.Type is "enter" or "move" or "key" or "text" or "button" or "wheel" or "leave";
+    // A curtain or local-input lock must be in place before later remote actions.
+    // Keep both ON and OFF ordered here so repeated toggles cannot overtake each other.
+    static bool IsInputBarrier(Packet packet) => packet.Type is "hello" or "permissions"
+        || (packet.Type == "feature" && packet.Name is "privacy" or "block");
 
     async Task HandleInputPackets(List<Packet> packets, CancellationToken token)
     {
@@ -235,7 +314,18 @@ public sealed partial class MainForm : Form
 
     void ApplyPermissions()
     {
-        _sessionPermissions = _permissions with { };
+        lock (_permissionStateGate)
+        {
+            var previous = _sessionPermissions;
+            if (previous.Files && !_permissions.Files) Interlocked.Increment(ref _filesPermissionEpoch);
+            if (previous.Clipboard && !_permissions.Clipboard) Interlocked.Increment(ref _clipboardPermissionEpoch);
+            if (previous.Audio && !_permissions.Audio) Interlocked.Increment(ref _audioPermissionEpoch);
+            if ((previous.Audio && !_permissions.Audio) || (previous.Recording && !_permissions.Recording)
+                || (previous.BlockInput && !_permissions.BlockInput) || (previous.Input && !_permissions.Input)
+                || (previous.Privacy && !_permissions.Privacy) || (previous.Restart && !_permissions.Restart))
+                Interlocked.Increment(ref _featuresPermissionEpoch);
+            _sessionPermissions = _permissions with { };
+        }
         _syncChecks = true;
         foreach (var (key, check) in _checks) { check.Checked = (IsHost || _peer != null) && (bool)typeof(Permissions).GetProperty(key)!.GetValue(_permissions)!; check.Enabled = IsHost; }
         _syncChecks = false;
@@ -322,6 +412,7 @@ public sealed partial class MainForm : Form
     }
     void Emergency()
     {
+        Interlocked.Increment(ref _featuresPermissionEpoch);
         _input.ReleaseRemote(); _input.ForceReleaseAll(); _input.SetBlockLocalInput(false); _curtain.Hide(); _blockingOn = _privacyOn = false;
         if (IsHost) { _permissions.Input = false; ApplyPermissions(); Send(new Packet { Type = "permissions", Permissions = _permissions with { } }); Send(new Packet { Type = "feature-state", Name = "block", Allow = false }); Send(new Packet { Type = "feature-state", Name = "privacy", Allow = false }); }
         Log("Đã trả điều khiển, mở khóa đầu vào và bỏ màn che." + (IsHost ? " Bật lại quyền Chuột / phím trên B để tiếp tục." : ""));

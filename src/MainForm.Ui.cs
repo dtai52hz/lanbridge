@@ -128,7 +128,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.5.1", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.5.2", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 

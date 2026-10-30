@@ -43,8 +43,9 @@ internal static partial class Program
         await CheckInboxPressureAsync();
         string root = Path.Combine(Path.GetTempPath(), "LanBridge-SessionSmoke-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
-        using var a = new MainForm(preview: true);
-        using var b = new MainForm(preview: true);
+        string receiveA = Path.Combine(root, "receive-a"), receiveB = Path.Combine(root, "receive-b");
+        using var a = new MainForm(preview: true, clipboard: new MemoryClipboard(), receivedDirectory: receiveA);
+        using var b = new MainForm(preview: true, clipboard: new MemoryClipboard(), receivedDirectory: receiveB);
         try
         {
             // Force native window handles for correct InvokeRequired behavior, without showing
@@ -78,6 +79,7 @@ internal static partial class Program
 
                 await CheckMinimizedSessionAsync(a, b, first, aInput, bInput);
                 await CheckMoveAndScrollLatencyAsync(a, b, first, aInput, bInput);
+                await CheckInteractiveTrafficAsync(a, b, first, aInput, bInput);
 
                 // Compose real Unicode correction packets, enqueue them through the input router's
                 // production worker and TLS transport, then reconstruct B's received document.
@@ -123,10 +125,6 @@ internal static partial class Program
                 await WaitUntilAsync(() => Log(a).Contains(chatB, StringComparison.Ordinal), "B chat did not reach A's UI log");
                 Check(Log(a).Contains("Bạn: " + chatA, StringComparison.Ordinal), "Sending chat did not update A's local UI log.");
 
-                string receiveA = Path.Combine(root, "receive-a"), receiveB = Path.Combine(root, "receive-b");
-                var fileLog = new ConcurrentQueue<string>();
-                ReplaceFiles(a, receiveA, first.A, fileLog);
-                ReplaceFiles(b, receiveB, first.B, fileLog);
                 string source = Path.Combine(root, "tiếng-Việt-payload.bin");
                 byte[] payload = RandomNumberGenerator.GetBytes(FileTransfer.ChunkSize * 2 + 79);
                 await File.WriteAllBytesAsync(source, payload);
@@ -135,7 +133,7 @@ internal static partial class Program
                 string destination = Directory.GetFiles(receiveB).Single();
                 Check(!destination.EndsWith(".partial", StringComparison.Ordinal), "Verified transfer left a partial file.");
                 Check(SHA256.HashData(await File.ReadAllBytesAsync(destination)).SequenceEqual(SHA256.HashData(payload)), "Actual TLS/UI-dispatched file transfer changed its bytes.");
-                Check(fileLog.Any(line => line.Contains("Đã nhận và xác minh", StringComparison.Ordinal)), "Receiver did not report successful SHA-256 verification.");
+                await WaitUntilAsync(() => Log(b).Contains("Đã nhận và xác minh", StringComparison.Ordinal), "Receiver did not report successful SHA-256 verification.");
                 Check(!Directory.Exists(receiveA), "One-way file transfer unexpectedly wrote to A's destination.");
 
                 Checks(b)["Files"].Checked = false;
@@ -240,11 +238,6 @@ internal static partial class Program
         public void Dispose() { A.Dispose(); B.Dispose(); Host.Dispose(); }
     }
 
-    private static void ReplaceFiles(MainForm form, string directory, PeerConnection peer, ConcurrentQueue<string> logs)
-    {
-        Get<FileTransfer>(form, "_files").Dispose();
-        Set(form, "_files", new FileTransfer(directory, packet => peer.SendAsync(packet), logs.Enqueue));
-    }
     private static void SendChat(MainForm form, string text) { Get<TextBox>(form, "_chat").Text = text; Call(form, "SendChat"); }
     private static string Log(MainForm form) => Get<RichTextBox>(form, "_log").Text;
     private static Dictionary<string, CheckBox> Checks(MainForm form) => Get<Dictionary<string, CheckBox>>(form, "_checks");

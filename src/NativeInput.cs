@@ -1,4 +1,5 @@
 using System.ComponentModel;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -86,6 +87,7 @@ public sealed class InputRouter : IDisposable
     private System.Threading.Timer? _moveTimer;
     private bool _moveTimerArmed;
     private int _moveTickPosted;
+    private static readonly double PointerMillisecondsPerTick = 1000d / Stopwatch.Frequency;
     private bool _emergencyChord;
     private const uint InjectionTag = 0x4C424447; // "LBDG", also checked in addition to injected flags.
     private readonly record struct KeyStroke(int Key, int Scan, bool Extended);
@@ -101,6 +103,9 @@ public sealed class InputRouter : IDisposable
     // Uses the real, independent message loop without touching physical input or installing hooks.
     internal void StartForTesting() => StartDispatcher(false);
     internal Action<Packet>? PacketAppliedForTesting { get; set; }
+    // Measures native work requested by real routing paths while native input is disabled.
+    // It cannot enable hooks or injection and is never called on a live native dispatcher.
+    internal Action<int>? NativeInputRequestedForTesting { get; set; }
     internal Task InvokeForTestingAsync(Action action) => OnOwnerAsync(action, CancellationToken.None);
 
     private void StartDispatcher(bool nativeInputEnabled)
@@ -166,7 +171,8 @@ public sealed class InputRouter : IDisposable
         _lastLocalPoint = Cursor.Position;
         _boundsReadAt = Environment.TickCount64;
         // A one-shot timer wakes the independent input owner; it never uses the window's UI
-        // timer or changes Windows' global timer resolution. Physical hooks remain immediate.
+        // timer or changes Windows' global timer resolution. Physical hooks remain immediate;
+        // the final idle-position wake-up remains subject to Windows timer scheduling.
         _moveTimer = new System.Threading.Timer(_ =>
         {
             if (_disposed || Interlocked.Exchange(ref _moveTickPosted, 1) != 0) return;
@@ -491,7 +497,11 @@ public sealed class InputRouter : IDisposable
         UpdateNormalizedRemote();
         if (returning) { ReleaseCore(true); return; }
         QueueControllerMove(new() { Type = "move", X = _lastNormX, Y = _lastNormY });
-        WarpLocal(_anchor);
+        // MouseHook consumes this physical move (returns nonzero), so Windows never applies
+        // it to A's cursor. It remains at the entry anchor for the next relative delta.
+        // Re-injecting that unchanged anchor here used to add another global mouse-hook
+        // round trip for every hardware report and stall clicks/keys on this same thread.
+        // Only entering/returning needs a local cursor warp.
     }
 
     private IntPtr KeyboardHook(int code, IntPtr message, IntPtr data)
@@ -810,7 +820,12 @@ public sealed class InputRouter : IDisposable
 
     private void InjectBatch(NativeInput[] inputs)
     {
-        if (!_started || !_nativeInputEnabled || inputs.Length == 0) return;
+        if (!_started || inputs.Length == 0) return;
+        if (!_nativeInputEnabled)
+        {
+            NativeInputRequestedForTesting?.Invoke(inputs.Length);
+            return;
+        }
         if (SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length)
             LastError = "Windows từ chối thao tác nhập. Hãy chạy hai ứng dụng với cùng mức quyền; UAC/desktop bảo mật không hỗ trợ.";
     }
@@ -849,14 +864,14 @@ public sealed class InputRouter : IDisposable
         if (sender is null) return;
         if (!ReferenceEquals(sender, _pacedMoveSender)) _movePacer.Clear();
         _pacedMoveSender = sender;
-        var ready = _movePacer.Offer(packet, Environment.TickCount64);
+        var ready = _movePacer.Offer(packet, PointerClockMilliseconds());
         if (ready is not null) QueueOutbound(ready, sender);
         ArmMoveTimer();
     }
 
     private void FlushPacedMove(bool force, Packet? followingPointerAction = null)
     {
-        var ready = _movePacer.Flush(Environment.TickCount64, force);
+        var ready = _movePacer.Flush(PointerClockMilliseconds(), force);
         if (ready is null || _pacedMoveSender is null) return;
         if (followingPointerAction is not null && ready.X == followingPointerAction.X && ready.Y == followingPointerAction.Y) return;
         QueueOutbound(ready, _pacedMoveSender);
@@ -866,8 +881,12 @@ public sealed class InputRouter : IDisposable
     {
         if (!_movePacer.HasPending || _moveTimerArmed || _moveTimer is null || _disposed) return;
         _moveTimerArmed = true;
-        _moveTimer.Change(_movePacer.DelayMilliseconds(Environment.TickCount64), Timeout.Infinite);
+        _moveTimer.Change(_movePacer.DelayMilliseconds(PointerClockMilliseconds()), Timeout.Infinite);
     }
+
+    // GetTickCount64 may advance only every 10-16 ms. The motion cadence must see elapsed
+    // hardware-report time at sub-millisecond resolution even while that coarse clock stalls.
+    internal static long PointerClockMilliseconds() => (long)(Stopwatch.GetTimestamp() * PointerMillisecondsPerTick);
 
     private void QueueOutbound(Packet packet, Action<Packet> sender)
     {

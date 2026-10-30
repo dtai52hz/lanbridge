@@ -1,3 +1,10 @@
+# 0.5.2
+
+- Sửa đường nhận chuột trên A: không gọi WarpLocal/SendInput cho từng mẫu vật lý đã bị hook giữ lại; giữ một lần đặt con trỏ khi vào/ra B. Tránh tạo thêm hàng nghìn lượt xử lý hook lúc vừa rê chuột vừa click/gõ.
+- Dùng Stopwatch cho nhịp gửi vị trí, tránh bước thời gian 10–16 ms của đồng hồ TickCount64; không thay đổi độ phân giải timer hệ thống.
+- Tách clipboard, file, media và thông báo giao diện sang FIFO nền có giới hạn để input không chờ thao tác clipboard/ổ đĩa/ACK. Giữ thứ tự hello/quyền, Màn che và Khóa đầu vào với các thao tác nhập tiếp theo; hủy phiên và bỏ tác vụ cũ khi thu hồi quyền.
+- Thêm hồi quy đường capture 8.000 mẫu xen 240 thao tác và tương tác liên tục qua TLS khi clipboard/UI bận; thêm công cụ đo riêng latency transport và mô phỏng TCP chậm.
+
 # 0.5.1
 
 - Giảm lag khi vừa di chuyển vừa cuộn: điều tiết vị trí mới nhất theo nhịp danh nghĩa 8 ms và gộp move chưa gửi liền nhau trước mã hóa, tránh dồn mẫu từ chuột có polling cao. Lần đầu/chuyển mép vẫn tức thì.

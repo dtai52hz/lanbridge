@@ -9,6 +9,17 @@ using System.Security.Cryptography.X509Certificates;
 using System.Text.Json;
 using LanBridge;
 
+if (args.Contains("--latency-only"))
+{
+    await LatencyProbe.RunAsync();
+    return;
+}
+if (args.Contains("--latency-shaped"))
+{
+    await LatencyProbe.RunShapedAsync();
+    return;
+}
+
 static void Check(bool condition, string message)
 {
     if (!condition) throw new InvalidOperationException(message);
