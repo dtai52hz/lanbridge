@@ -1,15 +1,15 @@
-# LanBridge 0.3.1
+# LanBridge 0.4.0
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: đưa chuột qua mép màn hình A để dùng chuột và bàn phím của A trên máy B. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
-[Tải bản Windows 0.3.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.3.1). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
+[Tải bản Windows 0.4.0](https://github.com/dtai52hz/lanbridge/releases/tag/v0.4.0). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 
 ## Chạy trên hai máy
 
-1. Chép `release/LanBridge-0.3.1-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
-2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.3.1 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
+1. Chép `release/LanBridge-0.4.0-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
+2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.4.0 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
 3. Trên máy có chuột/bàn phím chính (**A**), tìm tên và IP của **B** rồi bấm **Kết nối** ở thẻ máy đó. Không cần chọn vai trò A/B, nhập IP hoặc chép mã trong luồng này.
 4. Trên **B**, hộp **Yêu cầu kết nối** hiện tên và IP của A. Bấm **Đồng ý** để nhận điều khiển, hoặc **Từ chối**. Mỗi yêu cầu tìm qua danh sách đều cần xác nhận tại B; yêu cầu hết hạn sau 30 giây.
 5. Ứng dụng chuyển sang **Phiên điều khiển**. Trên A chọn B nằm bên phải/trái/trên/dưới A và bộ gõ Telex/VNI/Phím gốc. Trên B bật/tắt quyền cần cấp.
@@ -34,7 +34,18 @@ Ngắt phiên không tắt bộ tìm máy; đóng ứng dụng để máy ngừn
 
 Nút **−** chỉ thu nhỏ cửa sổ; phiên kết nối, chuột/phím và âm thanh vẫn chạy. Mở lại LanBridge từ thanh tác vụ để xem hoặc thay đổi phiên. Nút **×** đóng ứng dụng và kết thúc kết nối.
 
-Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.3.1 trên cả A và B.
+Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.4.0 trên cả A và B.
+
+## Ctrl+C / Ctrl+V file giữa hai máy
+
+1. Dùng **LanBridge 0.4.0 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/file** và **Truyền file**.
+2. Trên B, mở File Explorer, chọn một hoặc nhiều file/thư mục rồi nhấn **Ctrl+C**. Có thể làm khi đang điều khiển B bằng chuột/phím của A.
+3. LanBridge tự truyền bản sao qua phiên TLS, kiểm tra đủ dữ liệu và SHA-256. Nhật ký hiện **Clipboard đã sẵn sàng** khi toàn bộ lựa chọn đã nhận xong.
+4. Chuyển chuột về A, mở thư mục đích trong File Explorer rồi **Ctrl+V**. Không cần mở hộp **Gửi file**. Chiều A → B dùng cùng cách.
+
+File được truyền ngay khi sao chép, trước lúc dán. **File lớn cần chờ nhận xong rồi mới Ctrl+V**; nhấn dán trong lúc đang truyền chưa tạo được file ở thư mục đích. Giữ nguyên tên file, cây thư mục và thư mục trống. Hỗ trợ tối đa 2 GB/file, 8 GB/lần, 10.000 mục, 64 cấp thư mục; không sao chép symlink/junction, mục gốc trùng tên hoặc đường dẫn đặc biệt của Windows.
+
+Bản nhận nằm trong bộ nhớ đệm riêng `%LOCALAPPDATA%\LanBridge\Clipboard`; Ctrl+V để File Explorer chép vào nơi bạn chọn. Bộ nhớ đệm đã nhận đủ được giữ khi ngắt kết nối/đóng ứng dụng để clipboard còn dùng được, và dọn các lô cũ hơn 30 ngày khi mở phiên mới. Lô chưa hoàn tất bị hủy khi mất mạng, thu hồi quyền hoặc sao chép nội dung mới. File nguồn không bị xóa; đây là sao chép, không phải Ctrl+X/di chuyển. Clipboard ảnh bitmap và file ảo từ ứng dụng như Outlook chưa được hỗ trợ.
 
 ## Gõ tiếng Việt
 
@@ -55,7 +66,7 @@ Các ô quyền ở trang **Phiên điều khiển** được thay đổi **trê
 | Chức năng | Hành vi của bản này |
 | --- | --- |
 | Chuột / bàn phím | Chuyển ngay qua mép đã chọn; chuột 5 nút, cuộn dọc/ngang, phím và phím mở rộng. Telex/VNI tích hợp hoặc phím gốc. Hỗ trợ tọa độ của nhiều màn hình. |
-| Clipboard chữ | Đồng bộ văn bản hai chiều, tối đa 262.144 ký tự. Chưa đồng bộ ảnh, clipboard file hoặc thao tác xóa clipboard. |
+| Clipboard chữ/file | Văn bản hai chiều, tối đa 262.144 ký tự. Ctrl+C file/thư mục trong File Explorer rồi Ctrl+V ở máy kia sau khi nhận xong; cần đồng thời cấp quyền Truyền file. Chưa đồng bộ ảnh bitmap hoặc xóa clipboard tùy ý. |
 | Âm thanh B | Nút **Nghe B** trên A phát âm thanh hệ thống của B. Không thu microphone; dùng PCM 48 kHz stereo. |
 | Truyền file | Nút **Gửi file** trên A hoặc B; tối đa 2 GB/file. Nhận vào `%USERPROFILE%\Downloads\LanBridge`, tên mới không ghi đè. Kiểm tra số byte và SHA-256 trước khi hoàn tất. Không tự mở file nhận được. |
 | Khởi động lại B | B phải cấp quyền; A yêu cầu và B xác nhận tại máy. Windows đếm 30 giây; có thể hủy bằng `shutdown /a` trên B. |
@@ -68,7 +79,7 @@ Chuột/phím, clipboard chữ và truyền file được cho phép mặc địn
 
 ## Nếu không kết nối được
 
-- Mở LanBridge 0.3.1 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
+- Mở LanBridge 0.4.0 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
 - Nếu Windows Defender Firewall hỏi, cho phép LanBridge trên **mạng Riêng tư / Private** ở cả hai máy. Tìm thiết bị dùng **UDP 45832**; phiên dùng **TCP 45831** mặc định. Nếu TCP cổng đó đang bận, ứng dụng chọn một cổng trống và thông báo cổng thực qua danh sách. Cho phép theo file ứng dụng giúp áp dụng đúng cổng. Không cần mở cổng router hoặc dùng máy chủ Internet.
 - Nếu đã chặn trước đó, cho phép `LanBridge.exe` tại Windows Security → Firewall & network protection → Allow an app through firewall. Ứng dụng không tự sửa tường lửa.
 - Nếu máy hiện nhưng không kết nối được, kiểm tra B đang thấy yêu cầu và bấm Đồng ý trước khi hết 30 giây. Máy đang bận không nhận thêm phiên.
@@ -80,6 +91,8 @@ Chuột/phím, clipboard chữ và truyền file được cho phép mặc địn
 Đã kiểm tra tự động discovery UDP ở loopback, query/trả lời, danh sách/trạng thái bận/hết hạn, xác nhận TLS, từ chối/timeout/hủy yêu cầu, cùng các kiểm tra TLS cũ, Unicode, file, quyền và kết nối lại. Các kiểm tra giao diện dùng form ẩn/preview, không cài hook hay phát sinh thao tác nhập trên desktop. AVI từ hình tổng hợp đã được FFmpeg giải mã và tua kiểm chứng.
 
 Kiểm tra hồi quy 0.3.1 tái hiện việc ngắt phiên trước bản sửa: hai form ẩn được thu nhỏ, luồng giao diện cố ý tạm dừng trong khi gửi hơn 2.000 gói chuột kèm phím, chữ tiếng Việt và nút chuột qua TLS thật. Sau bản sửa, luồng nhập vẫn xử lý tới gói trả điều khiển khi giao diện còn dừng; phiên và thứ tự các thao tác quan trọng được giữ. Chế độ kiểm tra dùng luồng nhập riêng nhưng tắt hook và `SendInput` thật.
+
+Clipboard file 0.4.0 được kiểm tra cả ở bộ truyền và hai MainForm ẩn qua TLS thật: nhiều file/thư mục tiếng Việt, thư mục rỗng, SHA-256, không gửi vòng lặp, hủy lô dang dở, clipboard bận và nội dung sao chép mới, thu hồi quyền, reconnect và bản cũ không hỗ trợ. Các kiểm tra dùng clipboard giả riêng cho từng form, không thay clipboard đang dùng trên máy. Thao tác dán thật trong File Explorer trên hai PC vẫn cần thử thủ công.
 
 **Chưa kiểm chứng trên hai PC thật:** broadcast/multicast qua router/tường lửa thực tế, chuyển mép với chuột thực, gõ vào từng ứng dụng trên B, nhiều màn hình/DPI, âm thanh WASAPI, ghi desktop và màn che. Kiểm tra loopback không thay thế việc thử mạng Wi-Fi/Ethernet A/B của bạn.
 
@@ -97,7 +110,7 @@ pwsh -File .\scripts\build.ps1 -Task Test
 pwsh -File .\scripts\build.ps1 -Task Publish
 ```
 
-Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.3.1-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
+Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.4.0-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
 
 `dotnet run --project src/LanBridge.csproj -- --preview` chỉ mở giao diện, không bật hook hay lắng nghe cổng. Có thể thêm `--preview-output C:\duong-dan\preview.png` để xuất hình rồi tự đóng.
 

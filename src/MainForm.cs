@@ -17,7 +17,7 @@ public sealed partial class MainForm : Form
     readonly FlowLayoutPanel _permissionsPanel = new(), _actions = new();
     readonly Dictionary<string, CheckBox> _checks = new();
     readonly RichTextBox _log = new();
-    readonly System.Windows.Forms.Timer _clipboardTimer = new() { Interval = 650 };
+    readonly System.Windows.Forms.Timer _clipboardTimer = new() { Interval = 250 };
     readonly InputRouter _input = new();
     readonly AudioBridge _audio = new();
     readonly ScreenRecorder _recorder = new();
@@ -37,9 +37,11 @@ public sealed partial class MainForm : Form
     readonly string _receivedDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LanBridge");
     readonly string _recordingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "LanBridge");
 
-    public MainForm(bool preview = false)
+    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null)
     {
         _preview = preview;
+        _clipboard = clipboard ?? new WindowsClipboardAccess();
+        _clipboardCacheDirectory = clipboardCacheDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LanBridge", "Clipboard");
         Text = "LanBridge · Một bộ chuột phím, hai máy tính";
         BackColor = Background; ForeColor = Color.White; Font = new Font("Segoe UI", 10); DoubleBuffered = true;
         Size = new Size(1120, 860); MinimumSize = new Size(1060, 780); StartPosition = FormStartPosition.CenterScreen;
@@ -98,6 +100,7 @@ public sealed partial class MainForm : Form
         _peer = peer; _helloReceived = false; _sessionIsHost = IsHost; _session = new(); var session = _session; var token = session.Token;
         Action<Packet> inputSender = packet => peer.TrySend(packet);
         _input.Send = inputSender; _audio.Send = packet => peer.TrySend(packet);
+        ClipboardFiles? sessionClipboardFiles = null;
         _inbox = new SessionInbox();
         var inbox = _inbox;
         peer.Received += packet => { if (!token.IsCancellationRequested && !inbox.TryWrite(packet)) peer.Abort("Hàng đợi xử lý đã đầy; phiên được dừng để nhả phím và chuột."); };
@@ -105,21 +108,26 @@ public sealed partial class MainForm : Form
         {
             try { session.Cancel(); } catch (ObjectDisposedException) { }
             inbox.Complete();
+            sessionClipboardFiles?.Dispose();
             // Release on the input pump even while the main window is busy/minimized.
             // Sender identity is checked on that pump to ignore stale close callbacks.
             _input.ReleaseSession(inputSender);
             Ui(() => { if (_peer == peer) { Log("Phiên đã đóng" + (reason == null ? "." : ": " + reason)); Disconnect(); } });
         };
         _files = new FileTransfer(_receivedDirectory, p => peer.SendAsync(p, token), message => Ui(() => Log(message)));
+        try { AttachClipboardFiles(peer, token); }
+        catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
+        { _clipboardFiles = null; Log("Chưa bật được clipboard file: " + error.Message); }
+        sessionClipboardFiles = _clipboardFiles;
         _input.IsController = !IsHost; _input.CanControl = false;
         try { if (!_preview) _input.Start(); }
         catch { Disconnect(); throw; }
         _role.Enabled = _network.Enabled = false; _connect.Visible = _copy.Visible = false; _disconnect.Enabled = true;
         _status.Text = "●  Đã kết nối · TLS"; _status.ForeColor = Accent;
         peer.Start();
-        Task.Run(async () => { try { await foreach (var p in inbox.ReadAllAsync(token)) await HandlePacket(p, token); } catch (OperationCanceledException) { } catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); } }, token);
+        Task.Run(async () => { try { await foreach (var p in inbox.ReadAllAsync(token)) await HandlePacket(p, token, sessionClipboardFiles); } catch (OperationCanceledException) { } catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); } }, token);
         var bounds = SystemInformation.VirtualScreen;
-        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2 });
+        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion });
         if (IsHost) Send(new Packet { Type = "permissions", Permissions = _permissions with { } });
         ApplyPermissions(); _remoteState.Text = IsHost ? "MÁY B SẴN SÀNG NHẬN ĐIỀU KHIỂN" : "CHUỘT ĐANG Ở MÁY A";
         _devicesPage.SetSessionState(true); _devicesPage.Connecting = false; _tabs.SelectedTab = _sessionTab;
@@ -127,9 +135,14 @@ public sealed partial class MainForm : Form
         if (!IsHost) Log("Bộ gõ mặc định: Telex tích hợp. Gõ tieengs Vieetj → tiếng Việt. Chọn VNI hoặc Phím gốc trong ô Gõ.");
     }
 
-    async Task HandlePacket(Packet p, CancellationToken token)
+    async Task HandlePacket(Packet p, CancellationToken token, ClipboardFiles? clipboardFiles)
     {
         if (token.IsCancellationRequested) return;
+        if (p.Type.StartsWith("clipboard-files-", StringComparison.Ordinal))
+        {
+            if (clipboardFiles != null) await clipboardFiles.HandleAsync(p, _helloReceived && _clipboardFilesCapable && _sessionPermissions.Clipboard && _sessionPermissions.Files);
+            return;
+        }
         if (p.Type.StartsWith("file-", StringComparison.Ordinal)) { var files = _files; if (files != null) await files.HandleAsync(p, _sessionPermissions.Files); return; }
         // Hot input/audio paths never wait for the window message loop. Permissions
         // and hello still pass through the ordered reader before later input.
@@ -178,10 +191,10 @@ public sealed partial class MainForm : Form
                     if (p.Flags != 2) throw new InvalidDataException("Hai máy cần dùng LanBridge 0.2.0 hoặc mới hơn. Hãy cập nhật cả A và B.");
                     if (p.Width is < 1 or > 65536 || p.Height is < 1 or > 65536) throw new InvalidDataException("Kích thước màn hình không hợp lệ.");
                     _input.RemoteWidth = p.Width; _input.RemoteHeight = p.Height; _peerName.Text = "Đối tác: " + (p.Name ?? "Máy tính")[..Math.Min(p.Name?.Length ?? 0, 100)];
+                    _clipboardFilesCapable = p.ClipboardFilesVersion == 1;
                     _helloReceived = true; _devicesPage.SetSessionState(true, p.Name); ApplyPermissions(); break;
                 case "permissions" when !IsHost && p.Permissions != null: _permissions = p.Permissions; ApplyPermissions(); break;
-                case "clipboard" when _permissions.Clipboard && p.Text != null && p.Text.Length <= 262144:
-                    if (_lastClipboard != p.Text) { _lastClipboard = p.Text; try { if (p.Text.Length == 0) Clipboard.Clear(); else Clipboard.SetText(p.Text); } catch (System.Runtime.InteropServices.ExternalException) { } } break;
+                case "clipboard": ReceiveClipboardText(p, token); break;
                 case "feature" when IsHost: SetFeature(p.Name, p.Allow); break;
                 case "restart" when IsHost && _permissions.Restart: ConfirmRestart(); break;
             }
@@ -211,6 +224,7 @@ public sealed partial class MainForm : Form
             _actions.Controls[i].Enabled = _peer != null && allowed;
         }
         if (!_permissions.Files) _files?.CancelTransfers();
+        if (!_permissions.Files || !_permissions.Clipboard) CancelClipboardFiles();
         UpdateFeatureButtons();
     }
 
@@ -259,12 +273,6 @@ public sealed partial class MainForm : Form
         catch (Exception ex) { Log(ex.Message); Send(new Packet { Type = "feature-state", Name = feature, Allow = false, Text = ex.Message }); }
     }
 
-    void SyncClipboard()
-    {
-        if (_peer == null || !_permissions.Clipboard) return;
-        try { if (Clipboard.ContainsText()) { var text = Clipboard.GetText(); if (text.Length <= 262144 && text != _lastClipboard) { _lastClipboard = text; Send(new Packet { Type = "clipboard", Text = text }); } } }
-        catch (System.Runtime.InteropServices.ExternalException) { }
-    }
     async Task SendFile()
     {
         try { if (_files == null || !_permissions.Files) return; using var dialog = new OpenFileDialog { Title = "Chọn file gửi sang máy kia" }; if (dialog.ShowDialog(this) == DialogResult.OK && _files != null) await _files.SendFileAsync(dialog.FileName, _session!.Token); }
@@ -295,6 +303,7 @@ public sealed partial class MainForm : Form
     void Disconnect()
     {
         var peer = _peer; _peer = null; _helloReceived = false; _session?.Cancel(); _inbox?.Complete(); _inbox = null;
+        CancelClipboardFiles(); _clipboardFiles?.Dispose(); _clipboardFiles = null; _clipboardFilesCapable = false;
         _input.ReleaseRemote(false); _input.ForceReleaseAll(); _input.CanControl = false; _input.SetBlockLocalInput(false); _input.Send = null;
         _audio.StopCapture(); _audio.StopPlayback(); _recorder.Stop(); _curtain.Hide();
         _audio.Send = null;

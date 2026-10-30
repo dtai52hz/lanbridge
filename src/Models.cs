@@ -41,6 +41,16 @@ public sealed record Packet
     public bool Allow { get; set; }
     public long Length { get; set; }
     public Permissions? Permissions { get; set; }
+    public int ClipboardFilesVersion { get; set; }
+    public string? BatchId { get; set; }
+    public ClipboardFileEntry[]? ClipboardEntries { get; set; }
+}
+
+public sealed record ClipboardFileEntry
+{
+    public string Path { get; set; } = "";
+    public bool IsDirectory { get; set; }
+    public long Length { get; set; }
 }
 
 public static class WireJson

@@ -1,3 +1,11 @@
+# 0.4.0
+
+- Thêm Ctrl+C file/thư mục trong File Explorer rồi Ctrl+V trên máy kia, cả hai chiều; tự truyền từ clipboard, không cần chọn Gửi file.
+- Giữ tên, cây thư mục, thư mục trống và lựa chọn nhiều mục; chỉ đưa đường dẫn bản nhận vào clipboard sau khi toàn bộ lô đã xác minh SHA-256. File lớn cần chờ truyền xong trước khi dán.
+- Yêu cầu cả quyền Clipboard và Truyền file, thỏa thuận khả năng với máy kia; hủy lô cũ khi sao chép mới, ngắt hoặc thu hồi quyền, không gửi lặp bản nhận về nguồn.
+- Dùng thông báo clipboard của Windows và kiểm tra sequence; thử lại khi clipboard bận, không ghi đè nội dung người dùng vừa sao chép. Không chặn chuột/phím trong lúc truyền.
+- Thêm kiểm tra clipboard file riêng và tích hợp hai MainForm/TLS với clipboard giả; giữ bộ kiểm tra ngắt/thu nhỏ trước đó.
+
 # 0.3.1
 
 - Sửa lỗi khựng/ngắt phiên khi giao diện bận hoặc thu nhỏ: đưa hook và xử lý chuột/phím sang luồng STA có message loop riêng, bỏ vòng chờ giao diện trên đường xử lý đầu vào.

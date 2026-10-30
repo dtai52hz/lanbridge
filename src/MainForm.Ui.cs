@@ -128,7 +128,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.3.1", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.4.0", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 
@@ -221,7 +221,7 @@ public sealed partial class MainForm
         permissionContent.Controls.Add(permissionTitle, 0, 0);
         _permissionsPanel.Dock = DockStyle.Fill; _permissionsPanel.WrapContents = true; _permissionsPanel.Margin = Padding.Empty;
         _permissionsPanel.BackColor = Card; _permissionsPanel.Padding = Padding.Empty; permissionContent.Controls.Add(_permissionsPanel, 0, 1);
-        AddPermission("Input", "⌨  Chuột / phím"); AddPermission("Clipboard", "▣  Clipboard chữ");
+        AddPermission("Input", "⌨  Chuột / phím"); AddPermission("Clipboard", "▣  Clipboard chữ/file");
         AddPermission("Audio", "♪  Âm thanh B"); AddPermission("Files", "↑  Truyền file");
         AddPermission("Restart", "↻  Khởi động lại"); AddPermission("Recording", "●  Ghi màn hình B");
         AddPermission("BlockInput", "⊘  Khóa phím B"); AddPermission("Privacy", "◐  Màn che B");
