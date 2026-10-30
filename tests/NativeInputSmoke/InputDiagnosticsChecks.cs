@@ -94,11 +94,13 @@ internal static class InputDiagnosticsChecks
         try
         {
             Thread.Sleep(120);
+            bool hookOwnerResponsive = false;
+            router.InvokeForTestingAsync(() => hookOwnerResponsive = true).WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
             var active = Task.Run(router.GetDiagnosticsSnapshot).WaitAsync(TimeSpan.FromSeconds(1)).GetAwaiter().GetResult();
             check(active.NativeInjectionInProgress && active.NativeInjectionInProgressMilliseconds >= 80 &&
-                active.NativeInputs == 1 && active.NativeInjection.Count == 0 && active.PendingDispatcherWork == 1 &&
-                !active.NativeInputEnabled,
-                "Snapshots must expose an in-progress native-call stall and the work queued behind it without waiting for the owner.");
+                active.NativeInputs == 1 && active.NativeInjection.Count == 0 && active.PendingDispatcherWork == 0 &&
+                !active.NativeInputEnabled && hookOwnerResponsive,
+                "A stalled native worker must be visible while the hook owner remains free and later input waits at the serialized native boundary.");
         }
         finally { nativeResume.Set(); }
         native.WaitAsync(TimeSpan.FromSeconds(2)).GetAwaiter().GetResult();

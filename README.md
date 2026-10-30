@@ -1,15 +1,15 @@
-# LanBridge 0.5.3
+# LanBridge 0.5.4
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: đưa chuột qua mép màn hình A để dùng chuột và bàn phím của A trên máy B. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
-[Tải bản Windows 0.5.3](https://github.com/dtai52hz/lanbridge/releases/tag/v0.5.3). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
+[Tải bản Windows 0.5.4](https://github.com/dtai52hz/lanbridge/releases/tag/v0.5.4). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 
 ## Chạy trên hai máy
 
-1. Chép `release/LanBridge-0.5.3-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
-2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.5.3 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
+1. Chép `release/LanBridge-0.5.4-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
+2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.5.4 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
 3. Trên máy có chuột/bàn phím chính (**A**), tìm tên và IP của **B** rồi bấm **Kết nối** ở thẻ máy đó. Không cần chọn vai trò A/B, nhập IP hoặc chép mã trong luồng này.
 4. Trên **B**, hộp **Yêu cầu kết nối** hiện tên và IP của A. Bấm **Đồng ý** để nhận điều khiển, hoặc **Từ chối**. Mỗi yêu cầu tìm qua danh sách đều cần xác nhận tại B; yêu cầu hết hạn sau 30 giây.
 5. Ứng dụng chuyển sang **Phiên điều khiển**. Trên A chọn B nằm bên phải/trái/trên/dưới A và bộ gõ Telex/VNI/Phím gốc. Trên B bật/tắt quyền cần cấp.
@@ -34,7 +34,7 @@ Ngắt phiên không tắt bộ tìm máy; đóng ứng dụng để máy ngừn
 
 Nút **−** chỉ thu nhỏ cửa sổ; phiên kết nối, chuột/phím và âm thanh vẫn chạy. Mở lại LanBridge từ thanh tác vụ để xem hoặc thay đổi phiên. Nút **×** đóng ứng dụng và kết thúc kết nối.
 
-Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.5.3 trên cả A và B.
+Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.5.4 trên cả A và B.
 
 ## Di chuyển và cuộn chuột cùng lúc
 
@@ -46,11 +46,13 @@ Bản 0.5.2 tiếp tục sửa độ trễ khi vừa rê chuột vừa click/gõ
 
 Clipboard, file, âm thanh, ghi hình và thông báo giao diện được xử lý theo thứ tự trên một hàng đợi riêng có giới hạn. Chuột/phím không còn phải chờ clipboard bận, ổ đĩa hoặc một phản hồi truyền file. Xác nhận ban đầu, quyền, bật/tắt Màn che và Khóa đầu vào vẫn giữ thứ tự trước các thao tác nhập tiếp theo. Việc thu hồi quyền và hủy phiên vẫn được kiểm tra.
 
+Bản 0.5.4 sửa tiếp khâu nhận trên B: một worker riêng gọi `SendInput`, để luồng hook không phải chờ lời gọi Windows này. Đầu vào native của tối đa 32 gói được ghép theo thứ tự vào cùng một lời gọi, giảm việc chạy dồn khi mỗi lần gọi Windows tốn nhiều thời gian. Phím, click, chữ, nấc cuộn và ranh giới chuyển máy vẫn được giữ; thu hồi quyền nhả đầu vào sau lời gọi đang chạy. **Có thể cập nhật B trước, A 0.5.3 vẫn kết nối được.** Việc đặt con trỏ trên A khi chuyển mép vẫn xử lý ngay như trước.
+
 ## Đo khi vẫn khựng rồi chạy dồn
 
 Bản 0.5.3 thêm số đo trong phiên để tìm khâu gây chậm trên hai máy thật. Các kết quả kiểm thử localhost ở phần dưới chỉ xác minh đường mã; việc xác định nguyên nhân trên A/B cần số đo của chính phiên đó.
 
-1. Cập nhật **0.5.3 trên cả A và B**, kết nối rồi mở **Phiên điều khiển → Đo độ trễ** trên mỗi máy.
+1. Dùng **0.5.3 hoặc mới hơn trên cả A và B**, kết nối rồi mở **Phiên điều khiển → Đo độ trễ** trên mỗi máy.
 2. Thử rê chuột, click, cuộn và gõ để tái hiện hiện tượng trong 15–20 giây. Số đo được cập nhật mỗi nửa giây.
 3. Bấm **Tạm dừng số đo → Chép kết quả đo** trên cả hai máy. Bản chép chứa phiên bản, vai trò, thời gian và số lượng; không chứa nội dung phím, clipboard hoặc tọa độ. Việc đo vẫn chạy khi cửa sổ tạm dừng hiển thị.
 
@@ -60,14 +62,15 @@ Bản 0.5.3 thêm số đo trong phiên để tìm khâu gây chậm trên hai m
 | Đường nhập A → B → A | Mẫu trên gói input từ A tới khi B đi qua luồng nhập rồi gửi biên nhận về A. Không cần đồng bộ đồng hồ A/B. Có ở A khi đang thao tác; khoảng 2 mẫu/giây. |
 | Chờ gửi trên máy này | Thời gian trong hàng đợi gửi của InputRouter trước khi gọi transport; hữu ích trên A. |
 | Chờ luồng nhập Windows | Thời gian từ khi đăng tác vụ tới lúc luồng nhập riêng nhận tác vụ; hữu ích trên B. |
+| Hàng đợi phiên trước luồng nhập | Số gói và dung lượng đang chờ bộ nhận xử lý; bổ sung từ 0.5.4 để thấy tồn đọng trong lúc một lời gọi Windows còn chạy. |
 | Gửi đầu vào tới Windows | Thời gian gọi SendInput. Lệnh này đưa sự kiện vào hàng đợi; số nhỏ chưa chứng minh Windows hoặc ứng dụng B đã xử lý xong. |
 | Callback hook / tuổi sự kiện | Thời gian callback gồm phần chuyển tới hook khác, tuổi sự kiện vật lý và tuổi input mang dấu LanBridge. Tuổi sự kiện dùng đồng hồ Windows có bước thô; chú ý các lần tăng lớn, số mẫu và tuổi mẫu. |
 
-Các mục có gần nhất/trung bình/cực đại và số lần từ 50 ms. Cực đại input tính từ lúc mở ứng dụng, cực đại RTT từ lúc nối phiên; mẫu cũ được ghi rõ để tránh nhầm với lần khựng hiện tại. Biên nhận chỉ xác nhận đi qua luồng nhập, chưa đo lúc ứng dụng B vẽ xong. Mẫu move bị gộp giữ mã đo trên vị trí mới nhất; thiếu biên nhận của một mẫu không được coi là mất thao tác.
+Các mục có gần nhất/trung bình/cực đại, số lần từ 50 ms và số mẫu. Số mẫu gửi đầu vào đếm lời gọi Windows, một lời gọi có thể chứa nhiều sự kiện. Cực đại input tính từ lúc mở ứng dụng, cực đại RTT từ lúc nối phiên; mẫu cũ được ghi rõ để tránh nhầm với lần khựng hiện tại. Biên nhận chỉ xác nhận hoàn tất lời gọi native, chưa đo lúc ứng dụng B vẽ xong. Mẫu move bị gộp giữ mã đo trên vị trí mới nhất; thiếu biên nhận của một mẫu không được coi là mất thao tác.
 
 ## Ctrl+C / Ctrl+V file giữa hai máy
 
-1. Dùng **LanBridge 0.5.3 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
+1. Dùng **LanBridge 0.5.4 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
 2. Trên B, mở File Explorer, chọn một hoặc nhiều file/thư mục rồi nhấn **Ctrl+C**. Có thể làm khi đang điều khiển B bằng chuột/phím của A.
 3. LanBridge tự truyền bản sao qua phiên TLS, kiểm tra đủ dữ liệu và SHA-256. Nhật ký hiện **Clipboard đã sẵn sàng** khi toàn bộ lựa chọn đã nhận xong.
 4. Chuyển chuột về A, mở thư mục đích trong File Explorer rồi **Ctrl+V**. Không cần mở hộp **Gửi file**. Chiều A → B dùng cùng cách.
@@ -78,7 +81,7 @@ Bản nhận nằm trong bộ nhớ đệm riêng `%LOCALAPPDATA%\LanBridge\Clip
 
 ## Dùng chung ảnh chụp màn hình
 
-1. Cập nhật **LanBridge 0.5.3 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
+1. Cập nhật **LanBridge 0.5.4 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
 2. Trên B nhấn **Win+Shift+S** và chọn vùng chụp, hoặc dùng **Print Screen** theo cài đặt Windows. Công cụ chụp cần đưa ảnh vào clipboard.
 3. Chờ báo **Ảnh chụp đã sẵn sàng**, chuyển về A và **Ctrl+V** trong Paint, Word hoặc ứng dụng chat hỗ trợ dán ảnh. Chiều A → B dùng cùng cách.
 
@@ -118,7 +121,7 @@ Chuột/phím, clipboard chữ và truyền file được cho phép mặc địn
 
 ## Nếu không kết nối được
 
-- Mở LanBridge 0.5.3 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
+- Mở LanBridge 0.5.4 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
 - Nếu Windows Defender Firewall hỏi, cho phép LanBridge trên **mạng Riêng tư / Private** ở cả hai máy. Tìm thiết bị dùng **UDP 45832**; phiên dùng **TCP 45831** mặc định. Nếu TCP cổng đó đang bận, ứng dụng chọn một cổng trống và thông báo cổng thực qua danh sách. Cho phép theo file ứng dụng giúp áp dụng đúng cổng. Không cần mở cổng router hoặc dùng máy chủ Internet.
 - Nếu đã chặn trước đó, cho phép `LanBridge.exe` tại Windows Security → Firewall & network protection → Allow an app through firewall. Ứng dụng không tự sửa tường lửa.
 - Nếu máy hiện nhưng không kết nối được, kiểm tra B đang thấy yêu cầu và bấm Đồng ý trước khi hết 30 giây. Máy đang bận không nhận thêm phiên.
@@ -139,7 +142,9 @@ Hồi quy chuột/cuộn 0.5.1 dùng hai form ẩn, TLS loopback và chủ độ
 
 Kiểm tra tương tác 0.5.2 gửi liên tục move/click/phím qua TLS trong lúc giao diện nhận bị tạm dừng và có gói clipboard đứng trước, hoặc bộ nhận file đang chờ ổ đĩa. Mã 0.5.1 tái hiện việc chuột/phím chờ giao diện; bản sửa xử lý tới gói trả điều khiển khi giao diện còn dừng. Kiểm tra phương thức xử lý chuột của InputRouter với 8.000 mẫu giả lập xen click/phím/cuộn xác minh không yêu cầu lệnh native dư và giữ đủ delta/tọa độ. Các kiểm tra này không cài hook, không gọi SendInput thật và không thay clipboard của người dùng.
 
-Số đo 0.5.3 được kiểm tra bằng TLS localhost có relay trễ, peer cũ, nonce sai/lặp, gộp move giữ mã đo và tác vụ input bị giữ 120 ms. Các bộ đếm phân biệt chờ gửi, chờ luồng nhập và lời gọi native giả bị giữ; có kiểm tra dấu thời gian DWORD vòng 49,7 ngày. Chưa dùng các số đo mới để kết luận nguyên nhân lag trên hai máy thật.
+Số đo 0.5.3 được kiểm tra bằng TLS localhost có relay trễ, peer cũ, nonce sai/lặp, gộp move giữ mã đo và tác vụ input bị giữ 120 ms. Các bộ đếm phân biệt chờ gửi, chờ luồng nhập và lời gọi native giả bị giữ; có kiểm tra dấu thời gian DWORD vòng 49,7 ngày. Báo cáo từ B sau đó cho thấy phản hồi mạng 1,3 ms nhưng lời gọi đưa đầu vào vào Windows trung bình 35,6 ms, cực đại 316,5 ms. Dữ liệu xác định khâu chậm nằm trong lời gọi native; chưa xác định thành phần Windows hoặc hook nào gây ra nó.
+
+Hồi quy 0.5.4 dùng hai form ẩn/TLS thật, thay lời gọi native bằng observer chậm 35 ms: trong một lần đối chiếu, tuổi vị trí cuối giảm từ khoảng 1.240 ms trên mã cũ xuống 84 ms, số lời gọi giảm từ 47 xuống 19. Khi native bị giữ, luồng hook vẫn phản hồi; ACK phải chờ native, thu hồi quyền không được ACK thành công cho công việc cũ, và cấp lại quyền phải tiếp tục nhận input. Đây là tải tổng hợp, không cài hook hay tạo đầu vào thật; độ mượt sau bản sửa cần đo lại trên B.
 
 **Chưa kiểm chứng trên hai PC thật:** broadcast/multicast qua router/tường lửa thực tế, chuyển mép với chuột thực, gõ vào từng ứng dụng trên B, nhiều màn hình/DPI, âm thanh WASAPI, ghi desktop và màn che. Kiểm tra loopback không thay thế việc thử mạng Wi-Fi/Ethernet A/B của bạn.
 
@@ -157,7 +162,7 @@ pwsh -File .\scripts\build.ps1 -Task Test
 pwsh -File .\scripts\build.ps1 -Task Publish
 ```
 
-Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.5.3-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
+Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.5.4-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
 
 `dotnet run --project src/LanBridge.csproj -- --preview` chỉ mở giao diện, không bật hook hay lắng nghe cổng. Có thể thêm `--preview-output C:\duong-dan\preview.png` để xuất hình rồi tự đóng.
 

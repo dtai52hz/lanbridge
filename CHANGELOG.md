@@ -1,3 +1,11 @@
+# 0.5.4
+
+- Tách lời gọi SendInput trên máy B sang một worker có thứ tự riêng, để luồng hook tiếp tục nhận chuột/phím vật lý và xử lý thu hồi quyền khi Windows đang nhận đầu vào chậm.
+- Gom đầu vào native của tối đa 32 gói nhận thành một lời gọi Windows, thay vì chỉ gom việc chuyển sang luồng nhập. Giữ đủ thứ tự phím, chữ Unicode, click, cuộn, kéo thả và chuyển máy; chỉ gộp move liên tiếp như trước.
+- Nhả phím/nút qua hàng đợi có thứ tự khi ngắt, thu hồi quyền hoặc đổi vai trò; bỏ tác vụ cũ và phục hồi cả các phím/nút có thể đã được Windows nhận trước khi một lời gọi thất bại. Biên nhận input chỉ gửi sau khi công việc native hoàn tất và phiên/quyền còn hợp lệ.
+- Thêm số gói/byte chờ trước luồng nhập và số mẫu của từng bộ đếm vào báo cáo độ trễ. Bản sửa nhận đầu vào có thể dùng trên B với A 0.5.3.
+- Thêm hồi quy TLS với native observer chậm 35 ms, lời gọi bị giữ, ACK, thu hồi/cấp lại quyền và vòng đời worker. Kiểm tra giả lập không thay thế việc đo lại độ mượt trên hai PC thật.
+
 # 0.5.3
 
 - Thêm **Phiên điều khiển → Đo độ trễ** và chép báo cáo tổng hợp trên A/B để tìm nguyên nhân khựng theo đợt trong phiên thật.

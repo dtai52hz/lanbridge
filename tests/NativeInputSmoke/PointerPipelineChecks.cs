@@ -315,14 +315,17 @@ internal static class PointerPipelineChecks
         catch (OperationCanceledException) { canceled = true; }
         router.InvokeForTestingAsync(() => { }).GetAwaiter().GetResult();
         var held = (IDictionary)typeof(InputRouter).GetField("_receivedKeys", Private)!.GetValue(router)!;
-        check(canceled && !router.IsRemote && held.Count == 0 && output[^1].Type == "wheel",
-            "Cancellation between batch packets must immediately release held state and skip the canceled key.");
+        check(canceled && output[^1].Type == "key",
+            "Cancellation requested by an applied callback cannot retroactively remove an already committed native batch.");
+        router.ReleaseRemote(false);
+        router.InvokeForTestingAsync(() => { }).GetAwaiter().GetResult();
+        check(!router.IsRemote && held.Count == 0, "The canceled session must still release every planned held key on cleanup.");
         router.PacketAppliedForTesting = output.Add;
         bool invalid = false;
         int prior = output.Count;
         try { router.ApplyRemoteBatchAsync([new() { Type = "enter" }, new() { Type = "text", Dx = 1000, Text = "invalid" }, new() { Type = "move", X = 123 }]).GetAwaiter().GetResult(); }
         catch (InvalidDataException) { invalid = true; }
-        check(invalid && !router.IsRemote && output.Count == prior + 1,
-            "An invalid Unicode edit must release control and stop the remainder of a dispatcher batch.");
+        check(invalid && !router.IsRemote && output.Count == prior,
+            "An invalid Unicode edit must release control and discard the uncommitted dispatcher-batch prefix.");
     }
 }

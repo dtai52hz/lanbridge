@@ -43,9 +43,17 @@ Số đo 0.5.3 trong bộ Test mặc định:
 - NativeInputSmoke: chủ động giữ dispatcher, sender và native observer trong 120 ms để xác minh từng bộ đếm; snapshot vẫn đọc được khi owner bận. Kiểm tra callback lồng nhau, lỗi native, dấu thời gian DWORD vòng và phân biệt physical/own-injected/foreign-injected. Không cài hook hoặc gọi SendInput thật.
 - SessionSmoke: gói mẫu đi qua sender thật của InputRouter và TLS; B giữ pump không được ACK sớm, thả pump khi UI vẫn dừng phải trả ACK. Mẫu sai/lặp/phiên đã đóng bị bỏ, gộp move giữ tọa độ mới nhất và mã đo, báo cáo không chứa marker nội dung phím.
 
+Hồi quy 0.5.4 cho khâu nhận đầu vào:
+
+- NativeInputSmoke: hook/state owner vẫn xử lý công việc khi worker native bị giữ; một nhóm nhận được ghép thành một mảng native theo thứ tự. Kiểm tra hủy, thu hồi quyền, nhả phím/nút, lỗi native và chuyển vai trò; không gọi SendInput thật.
+- SessionSmoke: gửi liên tục move/phím/click/cuộn/chữ qua TLS trong lúc mỗi lời gọi native giả mất 35 ms. Giữ vị trí cuối, từng ranh giới quan trọng và phiên kết nối. Trong lần đối chiếu, mã 0.5.3 tạo 47 lời gọi, vị trí cuối chờ 1.239,7 ms; mã sửa tạo 19 lời gọi, chờ 84,2 ms với khoảng 761 ms phát liên tục. Các số này phụ thuộc lịch chạy của máy kiểm tra và không phải độ trễ mạng LAN thật.
+- Giữ native call trong lúc kiểm tra ACK: hook owner và heartbeat vẫn chạy, chưa được ACK trước khi thả native. Thu hồi quyền lúc đang giữ phải cập nhật trạng thái ngay, sau đó nhả phím qua worker, không ACK công việc cũ; cấp quyền lại phải nhận được phím mới trên cùng phiên.
+
+Toàn bộ 13 bộ kiểm tra đạt cho 0.5.4, gồm 1.608 assertions NativeInputSmoke và 380 assertions SessionSmoke. Lần chạy tổng ghi nhận 19 native jobs và tuổi vị trí cuối 75,8 ms trong kịch bản 35 ms giả lập; đây vẫn là phép thử tổng hợp.
+
 ## Thử trên hai máy thật
 
-1. Mở bản 0.5.3 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
+1. Mở bản 0.5.4 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
 2. Chọn đúng vị trí B; thử chuyển ngay sang B, trở lại A, sang B tiếp mà không đợi và hotkey Ctrl+Alt+F12. Thử trái/phải, cuộn, middle/X buttons và gõ trong Notepad trên B. Trên A chọn Telex gõ `tieengs Vieetj`, VNI gõ `tie6ng1 Vie6t5`; cả hai cần ra `tiếng Việt`. Thử Backspace, chữ hoa, Ctrl+C/V/Z, Shift+mũi tên, Shift+click và chuyển sang Phím gốc. Tắt bộ gõ ngoài nếu can thiệp; không cần UniKey B cho chế độ tích hợp.
 3. Trong lúc giữ Shift hoặc nút chuột trên B, rút mạng hoặc ngắt kết nối. Kiểm tra A lấy lại chuột và B không còn phím/nút bị giữ.
 4. Trên B tắt quyền Chuột/phím khi A đang điều khiển. Xác minh A nhận lại chuột và không tiếp tục thao tác được B cho tới khi B bật quyền lại.

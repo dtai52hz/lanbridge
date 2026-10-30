@@ -6,6 +6,8 @@ namespace LanBridge;
 internal sealed record SessionPacket(Packet Packet, Permissions? Permissions = null,
     long FilesEpoch = 0, long ClipboardEpoch = 0, long AudioEpoch = 0, long FeaturesEpoch = 0);
 
+internal readonly record struct SessionInboxSnapshot(int Packets, long Bytes);
+
 /// <summary>
 /// One ordered, bounded session queue. Only adjacent absolute pointer positions may
 /// replace one another; a key, text edit, button, wheel or session boundary is never
@@ -32,6 +34,8 @@ internal sealed class SessionInbox
         _capacity = capacity > 0 ? capacity : throw new ArgumentOutOfRangeException(nameof(capacity));
         _byteCapacity = byteCapacity > 0 ? byteCapacity : throw new ArgumentOutOfRangeException(nameof(byteCapacity));
     }
+
+    public SessionInboxSnapshot GetSnapshot() { lock (_gate) return new(_packets.Count, _bytes); }
 
     public bool TryWrite(Packet packet) => TryWriteSession(new(packet));
 

@@ -81,6 +81,7 @@ internal static partial class Program
                 await CheckMoveAndScrollLatencyAsync(a, b, first, aInput, bInput);
                 await CheckInputAcknowledgementAsync(a, b, first, aInput, bInput);
                 await CheckInteractiveTrafficAsync(a, b, first, aInput, bInput);
+                await CheckSlowNativeInjectionAsync(a, b, first, aInput, bInput);
 
                 // Compose real Unicode correction packets, enqueue them through the input router's
                 // production worker and TLS transport, then reconstruct B's received document.

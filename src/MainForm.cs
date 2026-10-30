@@ -311,7 +311,13 @@ public sealed partial class MainForm : Form
         var eligible = host && _sessionPermissions.Input ? packets
             : packets.Where(packet => packet.Type == "leave" && (host || packet.Allow)).ToList();
         if (eligible.Count == 0) return;
-        await _input.ApplyRemoteBatchAsync(eligible, token).ConfigureAwait(false);
+        try { await _input.ApplyRemoteBatchAsync(eligible, token).ConfigureAwait(false); }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        {
+            // A local input revocation supersedes queued native work, not the TLS
+            // session. Do not acknowledge the old batch; keep reading permission grants.
+            return;
+        }
         if (token.IsCancellationRequested) return;
         if (_input.LastError is { } error) throw new InvalidOperationException(error);
         if (host && _inputDiagnosticsCapable)

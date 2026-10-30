@@ -213,7 +213,6 @@ internal static partial class Program
             await session.A.SendAsync(new Packet { Type = "enter", Name = "Right", X = 1000, Y = 2000 });
             await session.A.SendAsync(new Packet { Type = "key", Key = 0x41, Scan = 0x1e, Down = true, Text = marker });
             await session.A.SendAsync(new Packet { Type = "key", Key = 0x41, Scan = 0x1e, Down = false });
-            await session.A.SendAsync(new Packet { Type = "leave", Name = "Right" });
             var timeout = Stopwatch.StartNew();
             while (!session.AtB.Any(packet => packet.Type == "key" && packet.Text == marker))
             {
@@ -228,8 +227,10 @@ internal static partial class Program
             Check(arrived.Wait(TimeSpan.FromSeconds(2)), "Could not receive an input-lock toggle and its following key while the test UI was paused.");
             Check(!keyApplied.Wait(TimeSpan.FromMilliseconds(100)), "A remote action overtook its preceding input-lock barrier while the UI was paused.");
             await sender.WaitAsync(TimeSpan.FromSeconds(3));
-            await WaitUntilAsync(() => keyApplied.IsSet && !receiver.IsRemote, "The input-lock barrier did not resume and release after the UI became available.");
+            await WaitUntilAsync(() => keyApplied.IsSet, "The input-lock barrier did not resume after the UI became available.");
             Check(lockedWhenKeyApplied, "The key was applied before its ordered local-input lock took effect on the no-native input owner.");
+            await session.A.SendAsync(new Packet { Type = "leave", Name = "Right" });
+            await WaitUntilAsync(() => !receiver.IsRemote, "The ordered input-lock test did not release after its key was applied.");
             AssertNoHooks(source, receiver);
         }
         finally

@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Diagnostics;
+using System.Runtime.ExceptionServices;
 using System.Runtime.InteropServices;
 using System.Text;
 
@@ -21,7 +22,9 @@ namespace LanBridge;
 /// text: Dx=number of characters to erase at caret,Text=NFC Unicode suffix to insert;
 /// leave: X,Y,Name=exit edge,Allow=true when the host asks the controller to return.
 /// A sends leave with Allow=false. B releases every injected key/button on any leave.
-/// Input injection follows Windows integrity boundaries; UAC/secure desktops cannot be controlled.
+/// B plans input on the hook owner and submits ordered native arrays on one separate worker.
+/// A retains synchronous local entry/return warps. Input injection follows Windows integrity
+/// boundaries; UAC/secure desktops cannot be controlled.
 /// </remarks>
 public sealed class InputRouter : IDisposable
 {
@@ -65,6 +68,15 @@ public sealed class InputRouter : IDisposable
     private int _ownerThread;
     private readonly object _lifecycle = new();
     private readonly InputDiagnostics _diagnostics = new();
+    private readonly SemaphoreSlim _remoteApply = new(1, 1);
+    private readonly object _nativeLock = new();
+    private readonly Queue<NativeWork> _nativeWork = new();
+    private readonly AutoResetEvent _nativeReady = new(false);
+    private Thread? _nativeWorker;
+    private bool _nativeStopping;
+    private int _nativeOutstanding, _inputGeneration;
+    private List<NativeInput>? _nativeCollector;
+    private List<Packet>? _appliedCollector;
     private Thread? _worker;
     private ApplicationContext? _application;
     private TaskCompletionSource? _startup;
@@ -114,6 +126,8 @@ public sealed class InputRouter : IDisposable
     // Measures native work requested by real routing paths while native input is disabled.
     // It cannot enable hooks or injection and is never called on a live native dispatcher.
     internal Action<int>? NativeInputRequestedForTesting { get; set; }
+    internal Action<Array>? NativeInputBatchForTesting { get; set; }
+    internal Action? NativeWorkQueuedForTesting { get; set; }
     internal Task InvokeForTestingAsync(Action action) => OnOwnerAsync(action, CancellationToken.None);
 
     private void StartDispatcher(bool nativeInputEnabled)
@@ -164,7 +178,9 @@ public sealed class InputRouter : IDisposable
         catch (Exception error) { startup.TrySetException(error); }
         finally
         {
+            if (!_disposed && _started) ReleaseCore(false);
             StopHooks();
+            RequestNativeStop();
             _application?.Dispose();
             _application = null;
             _context = null;
@@ -228,42 +244,176 @@ public sealed class InputRouter : IDisposable
     public void SetBlockLocalInput(bool enabled) => OnOwner(() =>
         _blockLocal = enabled && !_controller && _allowed);
 
-    /// <summary>May be called by a receiver thread. Injection is marshalled onto the independent input thread.</summary>
+    /// <summary>Queues receiver input for owner planning followed by ordered native-worker injection.</summary>
     public void ApplyRemote(Packet packet)
     {
         ArgumentNullException.ThrowIfNull(packet);
-        OnOwner(() => ApplyPacketCore(packet), measureInputQueue: true);
+        _ = ObserveRemoteApplicationAsync(ApplyRemoteAsync(packet));
     }
 
-    /// <summary>Completes after the input thread applies this packet, preserving receiver order without waiting for the UI.</summary>
+    /// <summary>Completes after native injection and owner finalization; neither the UI nor hook owner waits on B's SendInput.</summary>
     public Task ApplyRemoteAsync(Packet packet, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(packet);
-        return OnOwnerAsync(() => ApplyPacketCore(packet), cancellationToken, measureInputQueue: true);
+        return ApplyRemotePacketsAsync([packet], cancellationToken);
     }
 
-    /// <summary>Applies a small ordered input batch with one dispatcher handoff, without waiting for the UI.</summary>
+    /// <summary>Plans up to 32 ordered packets together, submits one native array and completes after owner finalization.</summary>
     public Task ApplyRemoteBatchAsync(IReadOnlyList<Packet> packets, CancellationToken cancellationToken = default)
     {
         ArgumentNullException.ThrowIfNull(packets);
         if (packets.Count > 32) throw new ArgumentOutOfRangeException(nameof(packets), "Input batches are limited to 32 packets.");
-        return OnOwnerAsync(() =>
+        return ApplyRemotePacketsAsync(packets, cancellationToken);
+    }
+
+    private async Task ObserveRemoteApplicationAsync(Task application)
+    {
+        // Fire-and-forget API still observes failures; the ordered application path has
+        // already reported native errors and released its state on the owner thread.
+        try { await application.ConfigureAwait(false); }
+        catch { }
+    }
+
+    private Task ApplyRemotePacketsAsync(IReadOnlyList<Packet> packets, CancellationToken cancellationToken)
+    {
+        var operation = ApplyRemotePacketsCoreAsync(packets, cancellationToken);
+        // Cancellation releases the caller promptly. The serialized pipeline still awaits
+        // accepted native work; cleanup keeps its FIFO position before the next native batch.
+        return cancellationToken.CanBeCanceled ? operation.WaitAsync(cancellationToken) : operation;
+    }
+
+    private async Task ApplyRemotePacketsCoreAsync(IReadOnlyList<Packet> packets, CancellationToken cancellationToken)
+    {
+        await _remoteApply.WaitAsync(cancellationToken).ConfigureAwait(false);
+        CancellationTokenRegistration cancellationRegistration = default;
+        int operationComplete = 0;
+        try
         {
-            foreach (var packet in packets)
+            Task<bool>? native = null;
+            List<Packet>? applied = null;
+            Exception? planningError = null;
+            int generation = 0;
+            bool finalized = false;
+            bool stale = false;
+            await OnOwnerAsync(() =>
             {
-                if (_disposed) break;
-                if (cancellationToken.IsCancellationRequested)
+                cancellationToken.ThrowIfCancellationRequested();
+                if (_controller)
+                {
+                    // A's entry/return warp must complete synchronously before its hook
+                    // suppresses the edge event. This change only moves B's native work.
+                    foreach (var packet in packets)
+                    {
+                        cancellationToken.ThrowIfCancellationRequested();
+                        ApplyPacketCore(packet);
+                    }
+                    finalized = true;
+                    return;
+                }
+                var priorReleases = BuildHeldReleaseInputs();
+                var inputs = new List<NativeInput>();
+                applied = new List<Packet>(packets.Count);
+                _nativeCollector = inputs;
+                _appliedCollector = applied;
+                try
+                {
+                    foreach (var packet in packets)
+                    {
+                        if (_disposed) break;
+                        if (cancellationToken.IsCancellationRequested)
+                        {
+                            ReleaseCore(false);
+                            cancellationToken.ThrowIfCancellationRequested();
+                        }
+                        ArgumentNullException.ThrowIfNull(packet);
+                        ApplyPacketCore(packet);
+                        if (LastError is not null) break;
+                    }
+                }
+                catch (Exception error)
+                {
+                    planningError = error;
+                    ReleaseCore(true);
+                }
+                finally { _nativeCollector = null; _appliedCollector = null; }
+                generation = _inputGeneration;
+                // Invalid/canceled batches have not reached Windows yet. Discard their
+                // prefix and release only keys/buttons held before this planning operation.
+                var actual = planningError is null ? inputs.ToArray() : priorReleases;
+                var recovery = planningError is null
+                    ? priorReleases.Concat(BuildPotentialReleases(actual)).ToArray() : priorReleases;
+                native = QueueNativeWork(actual, recovery, generation, cleanup: planningError is not null, staleRecovery: priorReleases);
+                if (cancellationToken.CanBeCanceled)
+                    cancellationRegistration = cancellationToken.Register(() => Post(() =>
+                    {
+                        if (Volatile.Read(ref operationComplete) == 0 && generation == _inputGeneration)
+                            ReleaseCore(false);
+                    }));
+                if (!_nativeInputEnabled) NativeWorkQueuedForTesting?.Invoke();
+                if (native.IsCompletedSuccessfully && planningError is null)
+                {
+                    if (cancellationToken.IsCancellationRequested && generation == _inputGeneration) ReleaseCore(false);
+                    stale = !CompleteAppliedPackets(applied, generation, native.Result);
+                    if (cancellationToken.IsCancellationRequested && generation == _inputGeneration)
+                    {
+                        ReleaseCore(false);
+                        stale = true;
+                    }
+                    finalized = true;
+                }
+            }, CancellationToken.None, measureInputQueue: true).ConfigureAwait(false);
+            if (finalized)
+            {
+                if (stale) throw new OperationCanceledException("Phiên điều khiển hoặc quyền nhập đã thay đổi.");
+                return;
+            }
+            Exception? nativeError = null;
+            bool executed = true;
+            if (native is not null)
+            {
+                try { executed = await native.ConfigureAwait(false); }
+                catch (Exception error) { nativeError = error; }
+            }
+            await OnOwnerAsync(() =>
+            {
+                if (cancellationToken.IsCancellationRequested && generation == _inputGeneration)
+                    ReleaseCore(false);
+                if (nativeError is not null && generation == _inputGeneration)
+                {
+                    LastError = "Windows từ chối thao tác nhập: " + nativeError.Message;
+                    ReleaseCore(true);
+                }
+                if (planningError is null && nativeError is null && applied is not null)
+                    stale = !CompleteAppliedPackets(applied, generation, executed);
+                if (cancellationToken.IsCancellationRequested && generation == _inputGeneration)
                 {
                     ReleaseCore(false);
-                    cancellationToken.ThrowIfCancellationRequested();
+                    stale = true;
                 }
-                ArgumentNullException.ThrowIfNull(packet);
-                ApplyPacketCore(packet);
-                // A native input failure releases held state in ApplyPacketCore. Never apply
-                // the rest of an already dequeued batch after that emergency release.
-                if (LastError is not null) break;
+            }, CancellationToken.None).ConfigureAwait(false);
+            if (_disposed) stale = true;
+            if (planningError is not null) ExceptionDispatchInfo.Capture(planningError).Throw();
+            if (nativeError is not null) ExceptionDispatchInfo.Capture(nativeError).Throw();
+            if (stale) throw new OperationCanceledException("Phiên điều khiển hoặc quyền nhập đã thay đổi.");
+        }
+        finally
+        {
+            Volatile.Write(ref operationComplete, 1);
+            cancellationRegistration.Dispose();
+            _remoteApply.Release();
+        }
+    }
+
+    private bool CompleteAppliedPackets(List<Packet> packets, int generation, bool executed)
+    {
+        if (!executed || generation != _inputGeneration) return false;
+        if (!_nativeInputEnabled)
+            foreach (var packet in packets)
+            {
+                if (generation != _inputGeneration) return false;
+                PacketAppliedForTesting?.Invoke(packet);
             }
-        }, cancellationToken, measureInputQueue: true);
+        return true;
     }
 
     private void ApplyPacketCore(Packet packet)
@@ -272,7 +422,11 @@ public sealed class InputRouter : IDisposable
         {
             ApplyCore(packet);
             if (LastError is not null) ReleaseCore(true);
-            if (!_nativeInputEnabled) PacketAppliedForTesting?.Invoke(packet);
+            if (!_nativeInputEnabled)
+            {
+                if (_appliedCollector is not null) _appliedCollector.Add(packet);
+                else PacketAppliedForTesting?.Invoke(packet);
+            }
         }
         catch
         {
@@ -315,6 +469,7 @@ public sealed class InputRouter : IDisposable
         if (_controller || !_allowed) return;
         if (packet.Type == "enter")
         {
+            Interlocked.Increment(ref _inputGeneration);
             ReleaseHeldInputs();
             _remote = true;
             LastError = null;
@@ -380,7 +535,7 @@ public sealed class InputRouter : IDisposable
 
     private void EnterRemote(Point point)
     {
-        if (_remote || !_allowed || Send is null || !_started) return;
+        if (_remote || !_allowed || Send is null || !_started || Volatile.Read(ref _nativeOutstanding) != 0) return;
         _edgeCandidate = false;
         _remote = true;
         _composer.Reset(); _textKeys.Clear(); _textCapsLock = (GetKeyState(0x14) & 1) != 0;
@@ -666,6 +821,7 @@ public sealed class InputRouter : IDisposable
 
     private void ReleaseCore(bool notify)
     {
+        Interlocked.Increment(ref _inputGeneration);
         bool wasRemote = _remote;
         _remote = false;
         _composer.Reset(); _textKeys.Clear();
@@ -696,6 +852,21 @@ public sealed class InputRouter : IDisposable
     }
 
     private void ReleaseHeldInputs()
+    {
+        if (_controller || _nativeCollector is not null || !_started)
+        {
+            ReleaseHeldInputsCore();
+            return;
+        }
+        var inputs = new List<NativeInput>();
+        _nativeCollector = inputs;
+        try { ReleaseHeldInputsCore(); }
+        finally { _nativeCollector = null; }
+        var releases = inputs.ToArray();
+        _ = ObserveCleanupAsync(QueueNativeWork(releases, releases, _inputGeneration, cleanup: true), _inputGeneration);
+    }
+
+    private void ReleaseHeldInputsCore()
     {
         // Only release keys/buttons actually injected by this router, never arbitrary local state.
         foreach (var key in _receivedKeys.Values) InjectKey(key, false);
@@ -744,11 +915,13 @@ public sealed class InputRouter : IDisposable
 
     private void InjectAbsolute(int x, int y) => Inject(AbsoluteInput(x, y));
 
-    private void InjectKey(KeyStroke key, bool down)
+    private void InjectKey(KeyStroke key, bool down) => Inject(KeyInput(key, down));
+
+    private static NativeInput KeyInput(KeyStroke key, bool down)
     {
         // Pause uses an E1 sequence, which KEYEVENTF_EXTENDEDKEY cannot represent; use its VK.
         bool scan = key.Scan != 0 && key.Key != 0x13;
-        Inject(new NativeInput
+        return new NativeInput
         {
             Type = 1,
             Union = new InputUnion { Keyboard = new KeyboardInput
@@ -758,7 +931,7 @@ public sealed class InputRouter : IDisposable
                 Flags = (scan ? 8u : 0u) | (key.Extended ? 1u : 0u) | (down ? 0u : 2u),
                 ExtraInfo = InjectionTag,
             } },
-        });
+        };
     }
 
     // Pure builder: tests validate Unicode/scancode flags without touching the real desktop.
@@ -843,24 +1016,161 @@ public sealed class InputRouter : IDisposable
     private void InjectBatch(NativeInput[] inputs)
     {
         if (!_started || inputs.Length == 0) return;
+        if (_nativeCollector is not null)
+        {
+            _nativeCollector.AddRange(inputs);
+            return;
+        }
+        if (!_controller)
+        {
+            int generation = _inputGeneration;
+            _ = ObserveCleanupAsync(QueueNativeWork(inputs, BuildPotentialReleases(inputs), generation, cleanup: true), generation);
+            return;
+        }
+        try { ExecuteNativeInputs(inputs); }
+        catch (Exception error) when (_nativeInputEnabled)
+        {
+            // Preserve A's existing synchronous failure reporting at its entry/return warp.
+            LastError = error.Message;
+        }
+    }
+
+    private void ExecuteNativeInputs(NativeInput[] inputs)
+    {
+        if (inputs.Length == 0) return;
         var testObserver = _nativeInputEnabled ? null : NativeInputRequestedForTesting;
-        if (!_nativeInputEnabled && testObserver is null) return;
+        var batchObserver = _nativeInputEnabled ? null : NativeInputBatchForTesting;
+        if (!_nativeInputEnabled && testObserver is null && batchObserver is null) return;
         long startedAt = _diagnostics.BeginNativeInput(inputs.Length);
         bool failed = true;
         try
         {
-            if (testObserver is not null)
+            if (!_nativeInputEnabled)
             {
-                testObserver(inputs.Length);
+                batchObserver?.Invoke(inputs);
+                testObserver?.Invoke(inputs.Length);
                 failed = false;
                 return;
             }
             failed = SendInput((uint)inputs.Length, inputs, Marshal.SizeOf<NativeInput>()) != inputs.Length;
-            if (failed)
-                LastError = "Windows từ chối thao tác nhập. Hãy chạy hai ứng dụng với cùng mức quyền; UAC/desktop bảo mật không hỗ trợ.";
+            if (failed) throw new InvalidOperationException("Windows từ chối thao tác nhập. Hãy chạy hai ứng dụng với cùng mức quyền; UAC/desktop bảo mật không hỗ trợ.");
         }
         finally { _diagnostics.EndNativeInput(startedAt, failed); }
     }
+
+    private NativeInput[] BuildHeldReleaseInputs() => _receivedKeys.Values.Select(key => KeyInput(key, false))
+        .Concat(_receivedButtons.Select(button => MouseInputEvent(ButtonFlag(button, false), button == "x1" ? 1 : button == "x2" ? 2 : 0))).ToArray();
+
+    // A combined native call can fail after any accepted prefix. Planned held-state may
+    // already be balanced by later ups in the array, so cover every potential down as well.
+    private static NativeInput[] BuildPotentialReleases(NativeInput[] inputs)
+    {
+        var releases = new List<NativeInput>();
+        var keys = new HashSet<(ushort Vk, ushort Scan, uint Flags)>();
+        var buttons = new HashSet<(uint Flags, uint Data)>();
+        foreach (var input in inputs)
+        {
+            if (input.Type == 1)
+            {
+                var keyboard = input.Union.Keyboard;
+                if ((keyboard.Flags & 2) != 0 || !keys.Add((keyboard.Vk, keyboard.Scan, keyboard.Flags))) continue;
+                keyboard.Flags |= 2;
+                releases.Add(new NativeInput { Type = 1, Union = new InputUnion { Keyboard = keyboard } });
+            }
+            else
+            {
+                var mouse = input.Union.Mouse;
+                uint flags = (mouse.Flags & 2) != 0 ? 4u : (mouse.Flags & 8) != 0 ? 16u :
+                    (mouse.Flags & 32) != 0 ? 64u : (mouse.Flags & 128) != 0 ? 256u : 0;
+                if (flags == 0 || !buttons.Add((flags, mouse.MouseData))) continue;
+                releases.Add(MouseInputEvent(flags, unchecked((int)mouse.MouseData)));
+            }
+        }
+        return releases.ToArray();
+    }
+
+    private Task<bool> QueueNativeWork(NativeInput[] inputs, NativeInput[] recovery, int generation, bool cleanup,
+        NativeInput[]? staleRecovery = null)
+    {
+        if (inputs.Length == 0 || (!_nativeInputEnabled && NativeInputRequestedForTesting is null && NativeInputBatchForTesting is null))
+            return Task.FromResult(true);
+        var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
+        lock (_nativeLock)
+        {
+            if (_nativeStopping) return Task.FromException<bool>(new ObjectDisposedException(nameof(InputRouter)));
+            if (!cleanup && _nativeWork.Count >= 32)
+                return Task.FromException<bool>(new IOException("Hàng đợi nhập Windows đã đầy."));
+            _nativeWork.Enqueue(new(inputs, recovery, staleRecovery ?? [], generation, cleanup, completion));
+            Interlocked.Increment(ref _nativeOutstanding);
+            if (_nativeWorker is null)
+            {
+                _nativeWorker = new Thread(RunNativeWorker) { IsBackground = true, Name = "LanBridge native input" };
+                _nativeWorker.SetApartmentState(ApartmentState.MTA);
+                _nativeWorker.Start();
+            }
+        }
+        _nativeReady.Set();
+        return completion.Task;
+    }
+
+    private void RunNativeWorker()
+    {
+        while (true)
+        {
+            NativeWork? work;
+            lock (_nativeLock)
+            {
+                work = _nativeWork.Count == 0 ? null : _nativeWork.Dequeue();
+                if (work is null && _nativeStopping) return;
+            }
+            if (work is null) { _nativeReady.WaitOne(); continue; }
+            bool executed = false;
+            Exception? failure = null;
+            try
+            {
+                // Revoke/disconnect may occur while an older native call is stalled. Do
+                // not start its queued ordinary inputs afterwards; cleanup barriers survive.
+                if (work.Cleanup || work.Generation == Volatile.Read(ref _inputGeneration))
+                {
+                    executed = true;
+                    ExecuteNativeInputs(work.Inputs);
+                }
+                else
+                {
+                    // Planning may have removed a previously injected key because this
+                    // now-stale batch contained its up/leave. Preserve those prior releases
+                    // even though none of this batch's new downs should reach Windows.
+                    ExecuteNativeInputs(work.StaleRecovery);
+                }
+            }
+            catch (Exception error)
+            {
+                failure = error;
+                // Recovery executes on this same worker before completion or the next job,
+                // even if the owner has changed role or shut down meanwhile.
+                try { ExecuteNativeInputs(work.Recovery); }
+                catch { }
+            }
+            finally { Interlocked.Decrement(ref _nativeOutstanding); }
+            if (failure is not null) work.Completion.TrySetException(failure);
+            else work.Completion.TrySetResult(executed);
+        }
+    }
+
+    private async Task ObserveCleanupAsync(Task<bool> cleanup, int generation)
+    {
+        try { await cleanup.ConfigureAwait(false); }
+        catch (Exception error)
+        {
+            Post(() =>
+            {
+                if (generation == _inputGeneration) LastError = "Windows từ chối nhả thao tác nhập: " + error.Message;
+            });
+        }
+    }
+
+    private sealed record NativeWork(NativeInput[] Inputs, NativeInput[] Recovery, NativeInput[] StaleRecovery, int Generation,
+        bool Cleanup, TaskCompletionSource<bool> Completion);
 
     private static bool IsButton(string? value) => value is "left" or "right" or "middle" or "x1" or "x2";
 
@@ -1055,6 +1365,7 @@ public sealed class InputRouter : IDisposable
             try { context.Post(_ => DisposeOnOwner(), null); }
             catch (InvalidAsynchronousStateException) { }
             worker?.Join(TimeSpan.FromSeconds(2));
+            _nativeWorker?.Join(TimeSpan.FromSeconds(2));
             return;
         }
         DisposeOnOwner();
@@ -1068,7 +1379,14 @@ public sealed class InputRouter : IDisposable
         _started = false;
         _disposed = true;
         _diagnostics.StopDispatcher();
+        RequestNativeStop();
         _application?.ExitThread();
+    }
+
+    private void RequestNativeStop()
+    {
+        lock (_nativeLock) _nativeStopping = true;
+        _nativeReady.Set();
     }
 
     private void StopHooks()

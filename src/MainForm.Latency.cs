@@ -77,6 +77,8 @@ public sealed partial class MainForm
         AppendTiming(text, "Tuổi sự kiện vật lý (*)", input.HookEventAge);
         AppendTiming(text, "Tuổi input của LanBridge (*)", input.OwnInjectedEventAge);
         text.AppendLine($"Đang chờ: gửi {input.PendingOutgoingWork}; luồng nhập {input.PendingDispatcherWork}.");
+        var inbox = _inbox?.GetSnapshot();
+        text.AppendLine($"Hàng đợi phiên trước luồng nhập: {inbox?.Packets ?? 0} gói; {(inbox?.Bytes ?? 0) / 1024.0:0.0} KiB.");
         text.AppendLine($"Đầu vào native: {input.NativeInputs}; lỗi: {input.NativeFailures}; {(input.NativeInputEnabled ? "đang bật" : "đang tắt / preview")}.");
         if (input.NativeInjectionInProgress) text.AppendLine($"Đang chờ Windows nhận đầu vào: {Ms(input.NativeInjectionInProgressMilliseconds)} ms.");
         if (input.HookCallbackInProgress) text.AppendLine($"Callback hook đang chạy: {Ms(input.HookCallbackInProgressMilliseconds)} ms.");
@@ -99,7 +101,7 @@ public sealed partial class MainForm
     static void AppendTiming(StringBuilder text, string name, InputTimingSnapshot timing)
     {
         text.AppendLine(timing.Count == 0 ? name + ": chưa có mẫu." :
-            $"{name}: gần nhất {Ms(timing.LastMilliseconds)} / TB {Ms(timing.AverageMilliseconds)} / max {Ms(timing.MaxMilliseconds)} ms; ≥50ms: {timing.SlowCount}; mẫu cũ {Ms(timing.LastSampleAgeMilliseconds / 1000)}s.");
+            $"{name}: gần nhất {Ms(timing.LastMilliseconds)} / TB {Ms(timing.AverageMilliseconds)} / max {Ms(timing.MaxMilliseconds)} ms; mẫu {timing.Count}; ≥50ms: {timing.SlowCount}; mẫu cũ {Ms(timing.LastSampleAgeMilliseconds / 1000)}s.");
     }
 
     sealed class LatencyDiagnosticsWindow(bool hiddenPreview) : Form
