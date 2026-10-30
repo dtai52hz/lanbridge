@@ -1,3 +1,11 @@
+# 0.5.0
+
+- Thêm chia sẻ ảnh chụp/bitmap trong clipboard hai chiều: Win+Shift+S/Print Screen trên B rồi Ctrl+V vào ứng dụng hỗ trợ ảnh trên A, không cần lưu file hay bấm Gửi file.
+- Ảnh dùng PNG truyền từng khối có ACK và SHA-256; giới hạn 32 MiB, 16.384 pixel mỗi chiều, tổng 40 MP; kiểm tra PNG và giải nén có giới hạn trước khi giải mã.
+- Ảnh chỉ cần quyền Clipboard, không phụ thuộc quyền Truyền file. Bổ sung thỏa thuận khả năng với máy kia và nhắc cập nhật bản cũ.
+- Giữ nguyên nội dung mới khi ảnh/file/chữ thay nhau, thử lại clipboard bận và chặn callback phiên cũ; giữ tính năng file, gõ tiếng Việt và thu nhỏ từ các bản trước.
+- Bổ sung kiểm tra bộ truyền ảnh, codec PNG và hai form/TLS với clipboard giả; không tác động clipboard thật khi kiểm tra.
+
 # 0.4.0
 
 - Thêm Ctrl+C file/thư mục trong File Explorer rồi Ctrl+V trên máy kia, cả hai chiều; tự truyền từ clipboard, không cần chọn Gửi file.

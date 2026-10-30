@@ -101,6 +101,7 @@ public sealed partial class MainForm : Form
         Action<Packet> inputSender = packet => peer.TrySend(packet);
         _input.Send = inputSender; _audio.Send = packet => peer.TrySend(packet);
         ClipboardFiles? sessionClipboardFiles = null;
+        ClipboardImages? sessionClipboardImages = null;
         _inbox = new SessionInbox();
         var inbox = _inbox;
         peer.Received += packet => { if (!token.IsCancellationRequested && !inbox.TryWrite(packet)) peer.Abort("Hàng đợi xử lý đã đầy; phiên được dừng để nhả phím và chuột."); };
@@ -109,6 +110,7 @@ public sealed partial class MainForm : Form
             try { session.Cancel(); } catch (ObjectDisposedException) { }
             inbox.Complete();
             sessionClipboardFiles?.Dispose();
+            sessionClipboardImages?.Dispose();
             // Release on the input pump even while the main window is busy/minimized.
             // Sender identity is checked on that pump to ignore stale close callbacks.
             _input.ReleaseSession(inputSender);
@@ -119,15 +121,17 @@ public sealed partial class MainForm : Form
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or ArgumentException)
         { _clipboardFiles = null; Log("Chưa bật được clipboard file: " + error.Message); }
         sessionClipboardFiles = _clipboardFiles;
+        AttachClipboardImages(peer, token);
+        sessionClipboardImages = _clipboardImages;
         _input.IsController = !IsHost; _input.CanControl = false;
         try { if (!_preview) _input.Start(); }
         catch { Disconnect(); throw; }
         _role.Enabled = _network.Enabled = false; _connect.Visible = _copy.Visible = false; _disconnect.Enabled = true;
         _status.Text = "●  Đã kết nối · TLS"; _status.ForeColor = Accent;
         peer.Start();
-        Task.Run(async () => { try { await foreach (var p in inbox.ReadAllAsync(token)) await HandlePacket(p, token, sessionClipboardFiles); } catch (OperationCanceledException) { } catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); } }, token);
+        Task.Run(async () => { try { await foreach (var p in inbox.ReadAllAsync(token)) await HandlePacket(p, token, sessionClipboardFiles, sessionClipboardImages); } catch (OperationCanceledException) { } catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); } }, token);
         var bounds = SystemInformation.VirtualScreen;
-        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion });
+        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion, ClipboardImagesVersion = ClipboardImages.ProtocolVersion });
         if (IsHost) Send(new Packet { Type = "permissions", Permissions = _permissions with { } });
         ApplyPermissions(); _remoteState.Text = IsHost ? "MÁY B SẴN SÀNG NHẬN ĐIỀU KHIỂN" : "CHUỘT ĐANG Ở MÁY A";
         _devicesPage.SetSessionState(true); _devicesPage.Connecting = false; _tabs.SelectedTab = _sessionTab;
@@ -135,9 +139,14 @@ public sealed partial class MainForm : Form
         if (!IsHost) Log("Bộ gõ mặc định: Telex tích hợp. Gõ tieengs Vieetj → tiếng Việt. Chọn VNI hoặc Phím gốc trong ô Gõ.");
     }
 
-    async Task HandlePacket(Packet p, CancellationToken token, ClipboardFiles? clipboardFiles)
+    async Task HandlePacket(Packet p, CancellationToken token, ClipboardFiles? clipboardFiles, ClipboardImages? clipboardImages)
     {
         if (token.IsCancellationRequested) return;
+        if (p.Type.StartsWith("clipboard-image-", StringComparison.Ordinal))
+        {
+            if (clipboardImages != null) await clipboardImages.HandleAsync(p, _helloReceived && _clipboardImagesCapable && _sessionPermissions.Clipboard);
+            return;
+        }
         if (p.Type.StartsWith("clipboard-files-", StringComparison.Ordinal))
         {
             if (clipboardFiles != null) await clipboardFiles.HandleAsync(p, _helloReceived && _clipboardFilesCapable && _sessionPermissions.Clipboard && _sessionPermissions.Files);
@@ -192,6 +201,7 @@ public sealed partial class MainForm : Form
                     if (p.Width is < 1 or > 65536 || p.Height is < 1 or > 65536) throw new InvalidDataException("Kích thước màn hình không hợp lệ.");
                     _input.RemoteWidth = p.Width; _input.RemoteHeight = p.Height; _peerName.Text = "Đối tác: " + (p.Name ?? "Máy tính")[..Math.Min(p.Name?.Length ?? 0, 100)];
                     _clipboardFilesCapable = p.ClipboardFilesVersion == 1;
+                    _clipboardImagesCapable = p.ClipboardImagesVersion == ClipboardImages.ProtocolVersion;
                     _helloReceived = true; _devicesPage.SetSessionState(true, p.Name); ApplyPermissions(); break;
                 case "permissions" when !IsHost && p.Permissions != null: _permissions = p.Permissions; ApplyPermissions(); break;
                 case "clipboard": ReceiveClipboardText(p, token); break;
@@ -224,7 +234,8 @@ public sealed partial class MainForm : Form
             _actions.Controls[i].Enabled = _peer != null && allowed;
         }
         if (!_permissions.Files) _files?.CancelTransfers();
-        if (!_permissions.Files || !_permissions.Clipboard) CancelClipboardFiles();
+        if (!_permissions.Clipboard) CancelClipboardTransfers();
+        else if (!_permissions.Files) CancelClipboardFilesOnly();
         UpdateFeatureButtons();
     }
 
@@ -303,7 +314,8 @@ public sealed partial class MainForm : Form
     void Disconnect()
     {
         var peer = _peer; _peer = null; _helloReceived = false; _session?.Cancel(); _inbox?.Complete(); _inbox = null;
-        CancelClipboardFiles(); _clipboardFiles?.Dispose(); _clipboardFiles = null; _clipboardFilesCapable = false;
+        CancelClipboardTransfers(); _clipboardFiles?.Dispose(); _clipboardFiles = null; _clipboardFilesCapable = false;
+        _clipboardImages?.Dispose(); _clipboardImages = null; _clipboardImagesCapable = false;
         _input.ReleaseRemote(false); _input.ForceReleaseAll(); _input.CanControl = false; _input.SetBlockLocalInput(false); _input.Send = null;
         _audio.StopCapture(); _audio.StopPlayback(); _recorder.Stop(); _curtain.Hide();
         _audio.Send = null;

@@ -11,7 +11,7 @@ function Invoke-ProjectDotnet {
 Push-Location $projectRoot
 try {
     if ($Task -eq 'Test') {
-        foreach ($testProject in @('TransportSmoke', 'DiscoverySmoke', 'DevicesPageSmoke', 'FileSmoke', 'ClipboardFilesSmoke', 'ClipboardSessionSmoke', 'NativeInputSmoke', 'TextInputSmoke', 'MediaSmoke', 'SessionSmoke')) {
+        foreach ($testProject in @('TransportSmoke', 'DiscoverySmoke', 'DevicesPageSmoke', 'FileSmoke', 'ClipboardFilesSmoke', 'ClipboardSessionSmoke', 'ClipboardImagesSmoke', 'ClipboardImageCodecSmoke', 'ClipboardImageSessionSmoke', 'NativeInputSmoke', 'TextInputSmoke', 'MediaSmoke', 'SessionSmoke')) {
             Invoke-ProjectDotnet run --project "tests\$testProject\$testProject.csproj" -c Release
         }
     } elseif ($Task -eq 'Publish') {
