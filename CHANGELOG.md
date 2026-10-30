@@ -1,3 +1,10 @@
+# 0.5.1
+
+- Giảm lag khi vừa di chuyển vừa cuộn: điều tiết vị trí mới nhất theo nhịp danh nghĩa 8 ms và gộp move chưa gửi liền nhau trước mã hóa, tránh dồn mẫu từ chuột có polling cao. Lần đầu/chuyển mép vẫn tức thì.
+- Gói input JSON gọn, giữ giao thức hiện tại và ghi cả frame TLS một lần; không bỏ các quyền false hoặc gộp qua ranh giới thao tác.
+- Máy B xử lý theo nhóm tối đa 32 gói trên luồng nhập; click/cuộn cùng tọa độ được đưa vào một batch SendInput. Giữ đủ từng delta cuộn, chiều, vị trí và thứ tự với phím/chữ/kéo thả.
+- Thêm kiểm tra sender chậm, hủy giữa nhóm, lỗi phiên cũ và hồi quy hai form/TLS với 1.000/8.000 mẫu chuột xen cuộn. Kịch bản từng làm 0.5.0 ngắt phiên nay giữ kết nối; chưa đo trên hai PC vật lý.
+
 # 0.5.0
 
 - Thêm chia sẻ ảnh chụp/bitmap trong clipboard hai chiều: Win+Shift+S/Print Screen trên B rồi Ctrl+V vào ứng dụng hỗ trợ ảnh trên A, không cần lưu file hay bấm Gửi file.

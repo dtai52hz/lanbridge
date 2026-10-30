@@ -6,7 +6,7 @@ using System.Runtime.ExceptionServices;
 using System.Security.Cryptography;
 using LanBridge;
 
-internal static class Program
+internal static partial class Program
 {
     private const BindingFlags Private = BindingFlags.Instance | BindingFlags.NonPublic;
     private static int _assertions;
@@ -77,6 +77,7 @@ internal static class Program
                 AssertNoHooks(aInput, bInput);
 
                 await CheckMinimizedSessionAsync(a, b, first, aInput, bInput);
+                await CheckMoveAndScrollLatencyAsync(a, b, first, aInput, bInput);
 
                 // Compose real Unicode correction packets, enqueue them through the input router's
                 // production worker and TLS transport, then reconstruct B's received document.
@@ -385,7 +386,7 @@ internal static class Program
     }
 
     private static string InputBoundary(Packet packet) =>
-        $"{packet.Type}|{packet.Key}|{packet.Scan}|{packet.Flags}|{packet.Button}|{packet.Down}|{packet.Text}|{packet.Dx}|{packet.X}|{packet.Y}|{packet.Name}|{packet.Allow}";
+        $"{packet.Type}|{packet.Key}|{packet.Scan}|{packet.Flags}|{packet.Button}|{packet.Down}|{packet.Text}|{packet.Dx}|{packet.Dy}|{packet.X}|{packet.Y}|{packet.Name}|{packet.Allow}";
 
     private static async Task CheckCloseWhileUiPausedAsync(MainForm a, MainForm b, Session session, InputRouter receiver)
     {

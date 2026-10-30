@@ -129,7 +129,24 @@ public sealed partial class MainForm : Form
         _role.Enabled = _network.Enabled = false; _connect.Visible = _copy.Visible = false; _disconnect.Enabled = true;
         _status.Text = "●  Đã kết nối · TLS"; _status.ForeColor = Accent;
         peer.Start();
-        Task.Run(async () => { try { await foreach (var p in inbox.ReadAllAsync(token)) await HandlePacket(p, token, sessionClipboardFiles, sessionClipboardImages); } catch (OperationCanceledException) { } catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); } }, token);
+        Task.Run(async () =>
+        {
+            try
+            {
+                await foreach (var batch in inbox.ReadBatchesAsync(token))
+                {
+                    for (int index = 0; index < batch.Count;)
+                    {
+                        if (!IsInputPacket(batch[index])) { await HandlePacket(batch[index++], token, sessionClipboardFiles, sessionClipboardImages); continue; }
+                        int start = index;
+                        while (index < batch.Count && IsInputPacket(batch[index])) index++;
+                        await HandleInputPackets(start == 0 && index == batch.Count ? batch : batch.GetRange(start, index - start), token);
+                    }
+                }
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); }
+        }, token);
         var bounds = SystemInformation.VirtualScreen;
         Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion, ClipboardImagesVersion = ClipboardImages.ProtocolVersion });
         if (IsHost) Send(new Packet { Type = "permissions", Permissions = _permissions with { } });
@@ -153,22 +170,8 @@ public sealed partial class MainForm : Form
             return;
         }
         if (p.Type.StartsWith("file-", StringComparison.Ordinal)) { var files = _files; if (files != null) await files.HandleAsync(p, _sessionPermissions.Files); return; }
-        // Hot input/audio paths never wait for the window message loop. Permissions
-        // and hello still pass through the ordered reader before later input.
-        if (p.Type is "enter" or "move" or "key" or "text" or "button" or "wheel" or "leave")
-        {
-            bool host = _sessionIsHost;
-            if (!_helloReceived || (!host && (p.Type != "leave" || !p.Allow)) || (p.Type != "leave" && !_sessionPermissions.Input)) return;
-            await _input.ApplyRemoteAsync(p, token).ConfigureAwait(false);
-            if (token.IsCancellationRequested) return;
-            if (_input.LastError is { } error) throw new InvalidOperationException(error);
-            if (p.Type == "leave" && host)
-            {
-                _input.SetBlockLocalInput(false);
-                Ui(() => { if (token.IsCancellationRequested) return; _blockingOn = false; UpdateFeatureButtons(); Send(new Packet { Type = "feature-state", Name = "block", Allow = false }); });
-            }
-            return;
-        }
+        // Input is dispatched above in small consecutive batches. Other packets
+        // remain ordered barriers; none can be overtaken by a later input batch.
         if (p.Type is "audio-format" or "audio" or "audio-stop")
         {
             if (!_sessionIsHost && _helloReceived && _sessionPermissions.Audio) _audio.Handle(p);
@@ -209,6 +212,25 @@ public sealed partial class MainForm : Form
                 case "restart" when IsHost && _permissions.Restart: ConfirmRestart(); break;
             }
         }, token);
+    }
+
+    static bool IsInputPacket(Packet packet) => packet.Type is "enter" or "move" or "key" or "text" or "button" or "wheel" or "leave";
+
+    async Task HandleInputPackets(List<Packet> packets, CancellationToken token)
+    {
+        if (token.IsCancellationRequested || !_helloReceived) return;
+        bool host = _sessionIsHost;
+        var eligible = host && _sessionPermissions.Input ? packets
+            : packets.Where(packet => packet.Type == "leave" && (host || packet.Allow)).ToList();
+        if (eligible.Count == 0) return;
+        await _input.ApplyRemoteBatchAsync(eligible, token).ConfigureAwait(false);
+        if (token.IsCancellationRequested) return;
+        if (_input.LastError is { } error) throw new InvalidOperationException(error);
+        if (host && eligible.Any(packet => packet.Type == "leave"))
+        {
+            _input.SetBlockLocalInput(false);
+            Ui(() => { if (token.IsCancellationRequested) return; _blockingOn = false; UpdateFeatureButtons(); Send(new Packet { Type = "feature-state", Name = "block", Allow = false }); });
+        }
     }
 
     void ApplyPermissions()

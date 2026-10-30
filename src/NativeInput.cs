@@ -1,4 +1,3 @@
-using System.Collections.Concurrent;
 using System.ComponentModel;
 using System.Runtime.InteropServices;
 using System.Text;
@@ -79,8 +78,14 @@ public sealed class InputRouter : IDisposable
     private readonly HashSet<string> _physicalButtons = [];
     private readonly HashSet<string> _receivedButtons = [];
     private readonly HashSet<string> _sentButtons = [];
-    private readonly ConcurrentQueue<(Packet Packet, Action<Packet> Sender)> _outbound = new();
-    private int _sending;
+    private readonly object _outboundLock = new();
+    private readonly LinkedList<(Packet Packet, Action<Packet> Sender)> _outbound = new();
+    private bool _sending;
+    private readonly PointerMovePacer _movePacer = new();
+    private Action<Packet>? _pacedMoveSender;
+    private System.Threading.Timer? _moveTimer;
+    private bool _moveTimerArmed;
+    private int _moveTickPosted;
     private bool _emergencyChord;
     private const uint InjectionTag = 0x4C424447; // "LBDG", also checked in addition to injected flags.
     private readonly record struct KeyStroke(int Key, int Scan, bool Extended);
@@ -160,6 +165,19 @@ public sealed class InputRouter : IDisposable
         _bounds = SystemInformation.VirtualScreen;
         _lastLocalPoint = Cursor.Position;
         _boundsReadAt = Environment.TickCount64;
+        // A one-shot timer wakes the independent input owner; it never uses the window's UI
+        // timer or changes Windows' global timer resolution. Physical hooks remain immediate.
+        _moveTimer = new System.Threading.Timer(_ =>
+        {
+            if (_disposed || Interlocked.Exchange(ref _moveTickPosted, 1) != 0) return;
+            Post(() =>
+            {
+                Interlocked.Exchange(ref _moveTickPosted, 0);
+                _moveTimerArmed = false;
+                FlushPacedMove(false);
+                ArmMoveTimer();
+            });
+        }, null, Timeout.Infinite, Timeout.Infinite);
         if (!nativeInputEnabled) { _started = true; return; }
         // Remember modifiers already held when the visible application enables the hooks.
         foreach (var vk in new[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C })
@@ -208,6 +226,30 @@ public sealed class InputRouter : IDisposable
     {
         ArgumentNullException.ThrowIfNull(packet);
         return OnOwnerAsync(() => ApplyPacketCore(packet), cancellationToken);
+    }
+
+    /// <summary>Applies a small ordered input batch with one dispatcher handoff, without waiting for the UI.</summary>
+    public Task ApplyRemoteBatchAsync(IReadOnlyList<Packet> packets, CancellationToken cancellationToken = default)
+    {
+        ArgumentNullException.ThrowIfNull(packets);
+        if (packets.Count > 32) throw new ArgumentOutOfRangeException(nameof(packets), "Input batches are limited to 32 packets.");
+        return OnOwnerAsync(() =>
+        {
+            foreach (var packet in packets)
+            {
+                if (_disposed) break;
+                if (cancellationToken.IsCancellationRequested)
+                {
+                    ReleaseCore(false);
+                    cancellationToken.ThrowIfCancellationRequested();
+                }
+                ArgumentNullException.ThrowIfNull(packet);
+                ApplyPacketCore(packet);
+                // A native input failure releases held state in ApplyPacketCore. Never apply
+                // the rest of an already dequeued batch after that emergency release.
+                if (LastError is not null) break;
+            }
+        }, cancellationToken);
     }
 
     private void ApplyPacketCore(Packet packet)
@@ -276,15 +318,12 @@ public sealed class InputRouter : IDisposable
             case "button" when IsButton(packet.Button):
             {
                 var button = packet.Button!;
-                MoveReceived(packet.X, packet.Y);
-                InjectButton(button, packet.Down);
+                InjectPointerAction(packet);
                 if (packet.Down) _receivedButtons.Add(button); else _receivedButtons.Remove(button);
                 break;
             }
             case "wheel":
-                MoveReceived(packet.X, packet.Y);
-                if (packet.Dy != 0) InjectMouse(0x0800, Math.Clamp(packet.Dy, -32768, 32767));
-                if (packet.Dx != 0) InjectMouse(0x1000, Math.Clamp(packet.Dx, -32768, 32767));
+                InjectPointerAction(packet);
                 break;
             case "key" when packet.Key is > 0 and < 255 && packet.Scan is >= 0 and <= 255:
             {
@@ -451,7 +490,7 @@ public sealed class InputRouter : IDisposable
         _remoteY = Math.Clamp(_remoteY, 0, height - 1d);
         UpdateNormalizedRemote();
         if (returning) { ReleaseCore(true); return; }
-        Queue(new() { Type = "move", X = _lastNormX, Y = _lastNormY });
+        QueueControllerMove(new() { Type = "move", X = _lastNormX, Y = _lastNormY });
         WarpLocal(_anchor);
     }
 
@@ -603,6 +642,9 @@ public sealed class InputRouter : IDisposable
         ReleaseHeldInputs();
         if (wasRemote && notify)
             Queue(new() { Type = "leave", X = _lastNormX, Y = _lastNormY, Name = ExitEdge.ToString(), Allow = !_controller });
+        // A return, disconnect or emergency ends this motion cadence. A later crossing on
+        // the same authenticated connection starts with an immediate first move again.
+        _movePacer.Clear();
         if (wasRemote && _controller && _started)
         {
             int x = Denormalize(_lastNormX, _bounds.Left, _bounds.Width);
@@ -662,11 +704,13 @@ public sealed class InputRouter : IDisposable
 
     private void WarpLocal(Point point) => InjectAbsolute(Normalize(point.X, _bounds.Left, _bounds.Width), Normalize(point.Y, _bounds.Top, _bounds.Height));
 
-    private void InjectAbsolute(int x, int y) => Inject(new NativeInput
+    private static NativeInput AbsoluteInput(int x, int y) => new()
     {
         Type = 0,
         Union = new InputUnion { Mouse = new MouseInput { Dx = x, Dy = y, Flags = 0x0001 | 0x8000 | 0x4000, ExtraInfo = InjectionTag } },
-    });
+    };
+
+    private void InjectAbsolute(int x, int y) => Inject(AbsoluteInput(x, y));
 
     private void InjectKey(KeyStroke key, bool down)
     {
@@ -719,22 +763,47 @@ public sealed class InputRouter : IDisposable
     }
 
     private void InjectButton(string button, bool down)
+        => Inject(MouseInputEvent(ButtonFlag(button, down), button == "x1" ? 1 : button == "x2" ? 2 : 0));
+
+    private static uint ButtonFlag(string button, bool down)
     {
-        uint flag = button switch
+        return button switch
         {
             "left" => down ? 0x0002u : 0x0004u,
             "right" => down ? 0x0008u : 0x0010u,
             "middle" => down ? 0x0020u : 0x0040u,
             _ => down ? 0x0080u : 0x0100u,
         };
-        InjectMouse(flag, button == "x1" ? 1 : button == "x2" ? 2 : 0);
     }
 
-    private void InjectMouse(uint flags, int data) => Inject(new NativeInput
+    private static NativeInput MouseInputEvent(uint flags, int data) => new()
     {
         Type = 0,
         Union = new InputUnion { Mouse = new MouseInput { MouseData = unchecked((uint)data), Flags = flags, ExtraInfo = InjectionTag } },
-    });
+    };
+
+    // Windows inserts one SendInput array atomically and in order. The hit-test position and
+    // wheel/button action must stay together, including both wheel axes, without 2-3 syscalls.
+    private static NativeInput[] BuildPointerInputs(Packet packet)
+    {
+        var position = AbsoluteInput(Math.Clamp(packet.X, 0, 65535), Math.Clamp(packet.Y, 0, 65535));
+        if (packet.Type == "button" && IsButton(packet.Button))
+            return [position, MouseInputEvent(ButtonFlag(packet.Button!, packet.Down), packet.Button == "x1" ? 1 : packet.Button == "x2" ? 2 : 0)];
+        if (packet.Type != "wheel") throw new ArgumentException("A wheel or button packet is required.", nameof(packet));
+        if (packet.Dy == 0 && packet.Dx == 0) return [position];
+        // MouseData is a signed 32-bit wheel delta. Do not truncate high-resolution scroll
+        // or a valid accumulated wheel delta back to the hook's original signed 16-bit range.
+        if (packet.Dy == 0) return [position, MouseInputEvent(0x1000, packet.Dx)];
+        if (packet.Dx == 0) return [position, MouseInputEvent(0x0800, packet.Dy)];
+        return [position, MouseInputEvent(0x0800, packet.Dy), MouseInputEvent(0x1000, packet.Dx)];
+    }
+
+    private void InjectPointerAction(Packet packet)
+    {
+        _lastNormX = Math.Clamp(packet.X, 0, 65535);
+        _lastNormY = Math.Clamp(packet.Y, 0, 65535);
+        InjectBatch(BuildPointerInputs(packet));
+    }
 
     private void Inject(NativeInput input)
         => InjectBatch([input]);
@@ -765,26 +834,84 @@ public sealed class InputRouter : IDisposable
     private void Queue(Packet packet)
     {
         var sender = Send;
+        // Critical actions are never delayed by the motion cadence. Flush the exact last
+        // position before shortcuts, text and session boundaries. A click/wheel already
+        // carries that position and can absorb the pending move for its same session.
+        if (packet.Type != "move") FlushPacedMove(true,
+            ReferenceEquals(sender, _pacedMoveSender) && (packet.Type is "button" or "wheel") ? packet : null);
         if (sender is null) return;
-        _outbound.Enqueue((packet, sender));
-        if (Interlocked.CompareExchange(ref _sending, 1, 0) == 0)
-            ThreadPool.QueueUserWorkItem(_ => DrainOutbound());
+        QueueOutbound(packet, sender);
+    }
+
+    private void QueueControllerMove(Packet packet)
+    {
+        var sender = Send;
+        if (sender is null) return;
+        if (!ReferenceEquals(sender, _pacedMoveSender)) _movePacer.Clear();
+        _pacedMoveSender = sender;
+        var ready = _movePacer.Offer(packet, Environment.TickCount64);
+        if (ready is not null) QueueOutbound(ready, sender);
+        ArmMoveTimer();
+    }
+
+    private void FlushPacedMove(bool force, Packet? followingPointerAction = null)
+    {
+        var ready = _movePacer.Flush(Environment.TickCount64, force);
+        if (ready is null || _pacedMoveSender is null) return;
+        if (followingPointerAction is not null && ready.X == followingPointerAction.X && ready.Y == followingPointerAction.Y) return;
+        QueueOutbound(ready, _pacedMoveSender);
+    }
+
+    private void ArmMoveTimer()
+    {
+        if (!_movePacer.HasPending || _moveTimerArmed || _moveTimer is null || _disposed) return;
+        _moveTimerArmed = true;
+        _moveTimer.Change(_movePacer.DelayMilliseconds(Environment.TickCount64), Timeout.Infinite);
+    }
+
+    private void QueueOutbound(Packet packet, Action<Packet> sender)
+    {
+        bool startWorker;
+        lock (_outboundLock)
+        {
+            // A slow sender used to accumulate every 1000 Hz mouse report before a wheel
+            // could run. Only replace adjacent, unsent absolute moves for this same session.
+            // Every wheel tick, key, text edit, drag boundary and enter/leave stays ordered.
+            if (packet.Type == "move" && _outbound.Last is { } last &&
+                last.Value.Packet.Type == "move" && ReferenceEquals(last.Value.Sender, sender))
+                last.Value = (packet, sender);
+            else _outbound.AddLast((packet, sender));
+            startWorker = !_sending;
+            _sending = true;
+        }
+        if (startWorker) ThreadPool.QueueUserWorkItem(_ => DrainOutbound());
     }
 
     private void DrainOutbound()
     {
         while (true)
         {
-            while (_outbound.TryDequeue(out var item))
+            (Packet Packet, Action<Packet> Sender) item;
+            lock (_outboundLock)
             {
-                try { item.Sender(item.Packet); }
-                catch (Exception error)
+                if (_outbound.First is not { } first)
                 {
-                    Post(() => { LastError = "Không gửi được thao tác: " + error.Message; ReleaseCore(false); });
+                    _sending = false;
+                    return;
                 }
+                item = first.Value;
+                _outbound.RemoveFirst();
             }
-            Interlocked.Exchange(ref _sending, 0);
-            if (_outbound.IsEmpty || Interlocked.CompareExchange(ref _sending, 1, 0) != 0) break;
+            try { item.Sender(item.Packet); }
+            catch (Exception error)
+            {
+                Post(() =>
+                {
+                    if (!ReferenceEquals(Send, item.Sender)) return;
+                    LastError = "Không gửi được thao tác: " + error.Message;
+                    ReleaseCore(false);
+                });
+            }
         }
     }
 
@@ -860,6 +987,10 @@ public sealed class InputRouter : IDisposable
 
     private void StopHooks()
     {
+        _moveTimer?.Dispose();
+        _moveTimer = null;
+        _moveTimerArmed = false;
+        _movePacer.Clear();
         _timer?.Stop();
         _timer?.Dispose();
         _timer = null;
@@ -896,4 +1027,36 @@ public sealed class InputRouter : IDisposable
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern int ToUnicodeEx(uint key, uint scan, byte[] state, StringBuilder text, int capacity, uint flags, IntPtr layout);
     [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr GetModuleHandle(string? moduleName);
+}
+
+/// <summary>Pure latest-position pacing; critical input can force a flush with no wait.</summary>
+internal sealed class PointerMovePacer
+{
+    internal const int IntervalMilliseconds = 8;
+    private Packet? _pending;
+    private bool _sent;
+    private long _lastSentAt;
+    internal bool HasPending => _pending is not null;
+
+    internal Packet? Offer(Packet move, long now)
+    {
+        _pending = move;
+        return Flush(now, false);
+    }
+
+    internal Packet? Flush(long now, bool force)
+    {
+        if (_pending is null || (!force && _sent && now - _lastSentAt < IntervalMilliseconds)) return null;
+        var ready = _pending;
+        _pending = null;
+        _lastSentAt = now;
+        _sent = true;
+        return ready;
+    }
+
+    internal int DelayMilliseconds(long now) => _sent
+        ? (int)Math.Clamp(IntervalMilliseconds - (now - _lastSentAt), 1, IntervalMilliseconds)
+        : 1;
+
+    internal void Clear() { _pending = null; _sent = false; }
 }

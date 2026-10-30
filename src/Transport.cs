@@ -7,8 +7,10 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Runtime.CompilerServices;
 using System.Text;
 using System.Text.Json;
+using System.Text.Json.Serialization;
 using System.Threading.Channels;
 
 namespace LanBridge;
@@ -334,18 +336,111 @@ public sealed class PeerConnection : IDisposable
     private readonly TcpClient _tcp;
     private readonly SslStream _stream;
     private readonly CancellationTokenSource _stop = new();
-    private readonly Channel<Outgoing> _outbound = Channel.CreateBounded<Outgoing>(new BoundedChannelOptions(QueueCapacity)
-    {
-        SingleReader = false,
-        SingleWriter = false,
-        FullMode = BoundedChannelFullMode.Wait,
-        AllowSynchronousContinuations = false
-    });
+    private readonly OutboundQueue _outbound = new(QueueCapacity);
     private long _lastReceive = Stopwatch.GetTimestamp();
     private int _started;
     private int _closed;
 
-    private sealed record Outgoing(byte[] Bytes, TaskCompletionSource? Completion = null);
+    private sealed record Outgoing(Packet? Packet, byte[]? Frame, TaskCompletionSource? Completion = null);
+    private static readonly JsonSerializerOptions InputJson = new(JsonSerializerDefaults.Web)
+    {
+        DefaultIgnoreCondition = JsonIgnoreCondition.WhenWritingDefault
+    };
+    // Packet/Permissions have nonzero defaults. Restrict omission of defaults to
+    // this input-only DTO so a denied permission is always transmitted as false.
+    private readonly record struct InputMessage(string Type, string? Text, string? Name,
+        int X, int Y, int Dx, int Dy, int Key, int Scan, int Flags, bool Down, string? Button, bool Allow);
+
+    // Keep only the newest unsent absolute position in each uninterrupted motion run.
+    // Encoding happens after dequeue: a 1000/8000 Hz mouse cannot fill the queue with
+    // obsolete JSON frames, and a wheel/key/button always follows its exact position.
+    private sealed class OutboundQueue(int capacity)
+    {
+        private readonly object _gate = new();
+        private readonly LinkedList<Outgoing> _packets = new();
+        private readonly Channel<bool> _ready = Channel.CreateBounded<bool>(new BoundedChannelOptions(1)
+        {
+            SingleReader = true, SingleWriter = false,
+            FullMode = BoundedChannelFullMode.DropWrite,
+            AllowSynchronousContinuations = false
+        });
+        private TaskCompletionSource _space = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        private bool _completed;
+
+        public bool TryWrite(Outgoing outgoing)
+        {
+            lock (_gate) return TryWriteLocked(outgoing);
+        }
+
+        private bool TryWriteLocked(Outgoing outgoing)
+        {
+            if (_completed) return false;
+            if (outgoing is { Packet.Type: "move", Completion: null } &&
+                _packets.Last is { Value: { Packet.Type: "move", Completion: null } } last)
+            {
+                last.Value = outgoing;
+                return true;
+            }
+            if (_packets.Count >= capacity) return false;
+            _packets.AddLast(outgoing);
+            _ready.Writer.TryWrite(true);
+            return true;
+        }
+
+        public async ValueTask WriteAsync(Outgoing outgoing, CancellationToken cancellationToken)
+        {
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                Task available;
+                lock (_gate)
+                {
+                    if (_completed) throw new OperationCanceledException(cancellationToken);
+                    if (TryWriteLocked(outgoing)) return;
+                    available = _space.Task;
+                }
+                await available.WaitAsync(cancellationToken).ConfigureAwait(false);
+            }
+        }
+
+        public async IAsyncEnumerable<Outgoing> ReadAllAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+        {
+            while (await _ready.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+            {
+                while (_ready.Reader.TryRead(out _)) { }
+                while (true)
+                {
+                    cancellationToken.ThrowIfCancellationRequested();
+                    Outgoing outgoing;
+                    lock (_gate)
+                    {
+                        if (_packets.First is not { } first) break;
+                        outgoing = first.Value;
+                        _packets.RemoveFirst();
+                        if (_packets.Count == capacity - 1)
+                        {
+                            var available = _space;
+                            _space = new(TaskCreationOptions.RunContinuationsAsynchronously);
+                            available.TrySetResult();
+                        }
+                    }
+                    yield return outgoing;
+                }
+            }
+        }
+
+        public void Complete()
+        {
+            lock (_gate)
+            {
+                _completed = true;
+                foreach (var outgoing in _packets) outgoing.Completion?.TrySetCanceled();
+                _packets.Clear();
+                _space.TrySetResult();
+                _ready.Writer.TryComplete();
+            }
+        }
+    }
 
     public event Action<Packet>? Received;
     public event Action<string?>? Closed;
@@ -450,14 +545,23 @@ public sealed class PeerConnection : IDisposable
     public bool TrySend(Packet packet)
     {
         if (IsClosed) return false;
-        byte[] bytes;
-        try { bytes = Encode(packet); }
+        Packet snapshot;
+        try
+        {
+            Validate(packet);
+            snapshot = packet with
+            {
+                Data = packet.Data?.ToArray(),
+                Permissions = packet.Permissions is { } permissions ? permissions with { } : null,
+                ClipboardEntries = packet.ClipboardEntries?.Select(entry => entry is null ? null! : entry with { }).ToArray()
+            };
+        }
         catch (Exception exception) when (exception is JsonException or ArgumentException or InvalidDataException)
         {
             Close("Gói dữ liệu gửi không hợp lệ.");
             return false;
         }
-        if (_outbound.Writer.TryWrite(new(bytes))) return true;
+        if (_outbound.TryWrite(new(snapshot, null))) return true;
         if (!CanDrop(packet.Type)) Close("Kết nối quá chậm; phiên điều khiển đã dừng để nhả phím và chuột.");
         return false;
     }
@@ -468,7 +572,7 @@ public sealed class PeerConnection : IDisposable
         ObjectDisposedException.ThrowIf(IsClosed, this);
         var completion = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         using var linked = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken, _stop.Token);
-        await _outbound.Writer.WriteAsync(new(Encode(packet), completion), linked.Token).ConfigureAwait(false);
+        await _outbound.WriteAsync(new(null, Encode(packet), completion), linked.Token).ConfigureAwait(false);
         await completion.Task.WaitAsync(linked.Token).ConfigureAwait(false);
     }
 
@@ -477,9 +581,18 @@ public sealed class PeerConnection : IDisposable
     private static byte[] Encode(Packet packet)
     {
         Validate(packet);
-        var bytes = JsonSerializer.SerializeToUtf8Bytes(packet, WireJson.Options);
+        var bytes = packet.Type is "move" or "wheel" or "button" or "key" or "enter" or "leave" or "text"
+            ? JsonSerializer.SerializeToUtf8Bytes(new InputMessage(packet.Type, packet.Text, packet.Name,
+                packet.X, packet.Y, packet.Dx, packet.Dy, packet.Key, packet.Scan, packet.Flags,
+                packet.Down, packet.Button, packet.Allow), InputJson)
+            : JsonSerializer.SerializeToUtf8Bytes(packet, WireJson.Options);
         if (bytes.Length is < 1 or > MaximumPacketBytes) throw new InvalidDataException("Gói dữ liệu vượt quá giới hạn 4 MiB.");
-        return bytes;
+        // One application frame in one TLS write avoids an extra record/packet and
+        // header-only reads for every movement and wheel notch.
+        var frame = new byte[bytes.Length + 4];
+        BinaryPrimitives.WriteInt32BigEndian(frame, bytes.Length);
+        bytes.CopyTo(frame, 4);
+        return frame;
     }
 
     private static void Validate(Packet packet)
@@ -520,25 +633,25 @@ public sealed class PeerConnection : IDisposable
     private async Task WriteLoopAsync()
     {
         Outgoing? current = null;
-        var header = new byte[4];
         try
         {
-            await foreach (var outgoing in _outbound.Reader.ReadAllAsync(_stop.Token).ConfigureAwait(false))
+            await foreach (var outgoing in _outbound.ReadAllAsync(_stop.Token).ConfigureAwait(false))
             {
                 current = outgoing;
-                BinaryPrimitives.WriteInt32BigEndian(header, outgoing.Bytes.Length);
-                await _stream.WriteAsync(header, _stop.Token).ConfigureAwait(false);
-                await _stream.WriteAsync(outgoing.Bytes, _stop.Token).ConfigureAwait(false);
+                var frame = outgoing.Frame ?? Encode(outgoing.Packet!);
+                await _stream.WriteAsync(frame, _stop.Token).ConfigureAwait(false);
                 outgoing.Completion?.TrySetResult();
                 current = null;
             }
         }
         catch (OperationCanceledException) when (_stop.IsCancellationRequested) { }
+        catch (Exception exception) when (exception is JsonException or ArgumentException or InvalidDataException)
+        { Close("Gói dữ liệu gửi không hợp lệ."); }
         catch { Close("Không thể gửi dữ liệu đến máy bên kia."); }
         finally
         {
             current?.Completion?.TrySetCanceled();
-            while (_outbound.Reader.TryRead(out var outgoing)) outgoing.Completion?.TrySetCanceled();
+            _outbound.Complete();
         }
     }
 
@@ -567,10 +680,9 @@ public sealed class PeerConnection : IDisposable
     {
         if (Interlocked.Exchange(ref _closed, 1) != 0) return;
         _stop.Cancel();
-        _outbound.Writer.TryComplete();
+        _outbound.Complete();
         _tcp.Dispose();
         _stream.Dispose();
-        while (_outbound.Reader.TryRead(out var outgoing)) outgoing.Completion?.TrySetCanceled();
         if (Closed is { } handlers)
             foreach (Action<string?> handler in handlers.GetInvocationList())
                 try { handler(reason); } catch { /* Cleanup must reach every subscriber, including input release. */ }

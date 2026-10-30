@@ -61,6 +61,30 @@ internal sealed class SessionInbox
         }
     }
 
+    /// <summary>Amortize the input-pump dispatch while retaining packet order and protocol barriers.</summary>
+    public async IAsyncEnumerable<List<Packet>> ReadBatchesAsync([EnumeratorCancellation] CancellationToken cancellationToken)
+    {
+        while (await _ready.Reader.WaitToReadAsync(cancellationToken).ConfigureAwait(false))
+        {
+            while (_ready.Reader.TryRead(out _)) { }
+            while (true)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                var batch = new List<Packet>(32);
+                lock (_gate)
+                {
+                    while (batch.Count < 32 && _packets.First is { } first)
+                    {
+                        batch.Add(first.Value);
+                        _packets.RemoveFirst();
+                    }
+                }
+                if (batch.Count == 0) break;
+                yield return batch;
+            }
+        }
+    }
+
     public void Complete()
     {
         lock (_gate)

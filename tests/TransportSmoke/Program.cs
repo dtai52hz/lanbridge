@@ -6,6 +6,7 @@ using System.Net.Sockets;
 using System.Security.Authentication;
 using System.Security.Cryptography;
 using System.Security.Cryptography.X509Certificates;
+using System.Text.Json;
 using LanBridge;
 
 static void Check(bool condition, string message)
@@ -99,6 +100,120 @@ using (var host = new HostServer(IPAddress.Loopback, 0))
     Check(!reconnectedRemote.IsClosed, "Host did not release the active connection slot after disconnect.");
 }
 Console.WriteLine("PASS: pairing validation, TLS pin, secret authentication, authenticated packet round-trip, one controller, bulk backpressure, healthy heartbeat and close propagation.");
+
+// A paused writer models a short Wi-Fi/scheduler stall. Thousands of absolute
+// samples must collapse before encoding, while every wheel/key/button boundary
+// retains its exact place, coordinates, direction and release state over real TLS.
+using (var host = new HostServer(IPAddress.Loopback, 0))
+{
+    var accepted = Signal<PeerConnection>();
+    host.Connected += peer => { accepted.TrySetResult(peer); peer.Start(); };
+    host.Start();
+    using var controller = await PeerConnection.ConnectAsync(host.PairingCode("127.0.0.1"));
+    using var remote = await accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var actual = new List<Packet>();
+    var expected = new List<Packet>();
+    var done = Signal<bool>();
+    remote.Received += packet =>
+    {
+        actual.Add(packet);
+        if (packet.Type == "burst-end") done.TrySetResult(true);
+    };
+    void SendBarrier(Packet packet)
+    {
+        Check(controller.TrySend(packet), $"Critical {packet.Type} was congested behind stale pointer positions.");
+        expected.Add(packet);
+    }
+    SendBarrier(new Packet { Type = "enter", X = 0, Y = 0, Name = "Right" });
+    SendBarrier(new Packet { Type = "key", Key = 0x11, Scan = 0x1D, Down = true });
+    for (int run = 0; run < 16; run++)
+    {
+        var movement = new Packet { Type = "move" };
+        for (int sample = 0; sample < 5000; sample++)
+        {
+            movement.X = run * 3000 + sample % 3000;
+            movement.Y = 60000 - movement.X;
+            Check(controller.TrySend(movement), "An uninterrupted pointer burst filled the outbound queue.");
+        }
+        expected.Add(movement with { });
+        // Reusing a mutable producer object cannot change a deferred packet.
+        movement.X = movement.Y = -1;
+        SendBarrier(new Packet { Type = "wheel", X = run * 3000 + 1999, Y = 60000 - (run * 3000 + 1999),
+            Dx = run % 2 == 0 ? 120 : -120, Dy = run % 3 == 0 ? -240 : 120 });
+        if (run == 7) SendBarrier(new Packet { Type = "button", X = 22999, Y = 37001, Button = "left", Down = true });
+        if (run == 8) SendBarrier(new Packet { Type = "button", X = 25999, Y = 34001, Button = "left", Down = false });
+    }
+    SendBarrier(new Packet { Type = "text", Text = "chuột và cuộn", Dx = 2 });
+    SendBarrier(new Packet { Type = "key", Key = 0x11, Scan = 0x1D, Down = false });
+    SendBarrier(new Packet { Type = "leave", X = 65535, Y = 0, Name = "Right", Allow = false });
+    var permissions = new Permissions { Input = false, Clipboard = false, Files = false };
+    Check(controller.TrySend(new Packet { Type = "permissions", Permissions = permissions }), "Permissions did not queue.");
+    expected.Add(new Packet { Type = "permissions", Permissions = permissions with { } });
+    permissions.Input = permissions.Clipboard = permissions.Files = true;
+    var end = new Packet { Type = "burst-end" };
+    expected.Add(end);
+    var written = controller.SendAsync(end);
+    Check(!written.IsCompleted, "SendAsync completed before its actual TLS write.");
+    var elapsed = Stopwatch.StartNew();
+    controller.Start();
+    await written.WaitAsync(TimeSpan.FromSeconds(2));
+    await done.Task.WaitAsync(TimeSpan.FromSeconds(2));
+    Check(actual.Count == expected.Count, $"80,000 moves produced {actual.Count} frames; expected {expected.Count} ordered coalesced frames.");
+    for (int i = 0; i < expected.Count; i++)
+        Check(JsonSerializer.Serialize(actual[i], WireJson.Options) == JsonSerializer.Serialize(expected[i], WireJson.Options),
+            $"Pointer/wheel/key/button/text/permission ordering or deferred snapshot changed at frame {i} ({expected[i].Type}).");
+    Check(elapsed.Elapsed < TimeSpan.FromSeconds(2), "Coalesced pointer and wheel burst left a stale input backlog.");
+    Check(!controller.IsClosed && !remote.IsClosed, "A high polling-rate pointer burst disconnected the session.");
+    Console.WriteLine($"PASS: 80,000 pointer samples became {actual.Count} ordered TLS frames in {elapsed.ElapsedMilliseconds} ms, preserving all wheel/key/button/text/permission boundaries.");
+}
+
+// Compact input JSON stays compatible with the original Packet reader. Global
+// permission defaults must not participate in omission of input-only defaults.
+using (var host = new HostServer(IPAddress.Loopback, 0))
+{
+    var accepted = Signal<PeerConnection>();
+    host.Connected += peer => { accepted.TrySetResult(peer); peer.Start(); };
+    host.Start();
+    var (tcp, ssl) = await RawConnectAsync(host.PairingCode("127.0.0.1"));
+    using (tcp) using (ssl)
+    using (var sender = await accepted.Task.WaitAsync(TimeSpan.FromSeconds(5)))
+    {
+        Check(sender.TrySend(new Packet { Type = "wheel", X = 65535, Y = 0, Dx = -120, Dy = 240 }), "Compact wheel did not queue.");
+        var header = new byte[4];
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(2));
+        await ssl.ReadExactlyAsync(header, timeout.Token);
+        int length = BinaryPrimitives.ReadInt32BigEndian(header);
+        Check(length is > 0 and < 80, $"An input frame still carries unrelated packet fields ({length} bytes).");
+        var bytes = new byte[length];
+        await ssl.ReadExactlyAsync(bytes, timeout.Token);
+        var wheel = JsonSerializer.Deserialize<Packet>(bytes, WireJson.Options)!;
+        Check(wheel.Type == "wheel" && wheel.X == 65535 && wheel.Y == 0 && wheel.Dx == -120 && wheel.Dy == 240,
+            "Compact input JSON changed coordinates or wheel direction for the existing Packet reader.");
+    }
+}
+Console.WriteLine("PASS: compact input frames retain existing JSON protocol compatibility.");
+
+using (var host = new HostServer(IPAddress.Loopback, 0))
+{
+    var accepted = Signal<PeerConnection>();
+    host.Connected += peer => { accepted.TrySetResult(peer); peer.Start(); };
+    host.Start();
+    using var controller = await PeerConnection.ConnectAsync(host.PairingCode("127.0.0.1"));
+    using var remote = await accepted.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    var closed = Signal<string?>();
+    controller.Closed += reason => closed.TrySetResult(reason);
+    for (int i = 0; i < 128; i++)
+        Check(controller.TrySend(new Packet { Type = "key", Key = 0x41, Down = i % 2 == 0 }), "Critical queue capacity changed unexpectedly.");
+    using var cancel = new CancellationTokenSource();
+    var waiting = controller.SendAsync(new Packet { Type = "file-chunk", Data = [1, 2, 3] }, cancel.Token);
+    Check(!waiting.IsCompleted, "A full bulk queue did not apply backpressure.");
+    cancel.Cancel();
+    await ThrowsAsync(async () => await waiting.WaitAsync(TimeSpan.FromSeconds(2)), "Cancelling a bulk capacity wait did not unblock it.");
+    Check(!controller.IsClosed, "Cancelling a queued bulk producer disconnected the session.");
+    Check(!controller.TrySend(new Packet { Type = "key", Key = 0x41, Down = false }), "A critical queue overflow was silently accepted.");
+    Check(await closed.Task.WaitAsync(TimeSpan.FromSeconds(2)) is { Length: > 0 }, "Critical overflow did not close with an actionable reason.");
+}
+Console.WriteLine("PASS: bulk backpressure cancellation and safe critical-overflow shutdown remain bounded.");
 
 using (var host = new HostServer(IPAddress.Loopback, 0))
 {
