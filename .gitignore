@@ -1,0 +1,7 @@
+.tools/
+src/bin/
+src/obj/
+**/bin/
+**/obj/
+release/
+test-results/
