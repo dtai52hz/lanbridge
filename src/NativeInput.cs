@@ -54,6 +54,12 @@ public sealed class InputRouter : IDisposable
     public int RemoteWidth { get; set; } = 1920;
     public int RemoteHeight { get; set; } = 1080;
     public int EdgeDwellMilliseconds { get; set; } = 0;
+    /// <summary>Scales A's remote pointer movement without changing Windows' global mouse settings.</summary>
+    public int MouseSpeedPercent
+    {
+        get => Volatile.Read(ref _mouseSpeedPercent);
+        set => OnOwner(() => Volatile.Write(ref _mouseSpeedPercent, Math.Clamp(value, 50, 200)));
+    }
     public TypingMode TypingMode
     {
         get => _composer.Mode;
@@ -82,6 +88,7 @@ public sealed class InputRouter : IDisposable
     private TaskCompletionSource? _startup;
     private int _disposeRequested;
     private bool _nativeInputEnabled;
+    private int _mouseSpeedPercent = 100;
     private System.Windows.Forms.Timer? _timer;
     private Rectangle _bounds;
     private Point _lastLocalPoint, _anchor;
@@ -653,8 +660,9 @@ public sealed class InputRouter : IDisposable
         int dx = point.X - _anchor.X, dy = point.Y - _anchor.Y;
         if (dx == 0 && dy == 0) return;
         int width = Math.Clamp(RemoteWidth, 2, 65536), height = Math.Clamp(RemoteHeight, 2, 65536);
-        _remoteX += dx;
-        _remoteY += dy;
+        double speed = _mouseSpeedPercent / 100d;
+        _remoteX += dx * speed;
+        _remoteY += dy * speed;
         bool returning = ExitEdge switch
         {
             ScreenEdge.Right => _remoteX <= 0 && dx < 0,

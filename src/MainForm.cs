@@ -39,9 +39,10 @@ public sealed partial class MainForm : Form
     readonly string _receivedDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LanBridge");
     readonly string _recordingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "LanBridge");
 
-    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null, string? receivedDirectory = null)
+    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null, string? receivedDirectory = null, string? preferencesPath = null)
     {
         _preview = preview;
+        _preferencesStore = !preview || preferencesPath != null ? new UserPreferencesStore(preferencesPath) : null;
         if (receivedDirectory != null) _receivedDirectory = Path.GetFullPath(receivedDirectory);
         _clipboard = clipboard ?? new WindowsClipboardAccess();
         _clipboardCacheDirectory = clipboardCacheDirectory ?? Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "LanBridge", "Clipboard");
@@ -49,6 +50,7 @@ public sealed partial class MainForm : Form
         BackColor = Background; ForeColor = Color.White; Font = new Font("Segoe UI", 10); DoubleBuffered = true;
         Size = new Size(1120, 860); MinimumSize = new Size(1060, 780); StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
+        InitializeDesktopExperience();
         _input.RemoteControlChanged = remote => Ui(() => { _remoteState.Text = remote ? "ĐANG ĐIỀU KHIỂN MÁY B" : (_peer != null ? "CHUỘT ĐANG Ở MÁY A" : "CHƯA CÓ PHIÊN KẾT NỐI"); _remoteState.ForeColor = remote ? Accent : Muted; if (remote && _input.LastError is { } error) { Log(error); Emergency(); } });
         _input.EmergencyReleased = () => { Interlocked.Increment(ref _featuresPermissionEpoch); Ui(Emergency); };
         _audio.Error = message => Ui(() => { _audio.StopCapture(); _audio.StopPlayback(); Log("Âm thanh: " + message); _audioOn = false; UpdateFeatureButtons(); if (IsHost) Send(new Packet { Type = "feature-state", Name = "audio", Allow = false }); });
@@ -56,7 +58,15 @@ public sealed partial class MainForm : Form
         _clipboardTimer.Tick += (_, _) => SyncClipboard(); _clipboardTimer.Start();
         Microsoft.Win32.SystemEvents.SessionSwitch += WindowsSessionChanged;
         Shown += (_, _) => { if (!_preview) StartNetworkServices(); };
-        FormClosing += (_, _) => { _closing = true; Microsoft.Win32.SystemEvents.SessionSwitch -= WindowsSessionChanged; StopNetworkServices(); Disconnect(); _input.Dispose(); _audio.Dispose(); _recorder.Dispose(); _curtain.Dispose(); _clipboardTimer.Dispose(); };
+        FormClosing += (_, _) =>
+        {
+            var preferencesSaved = FlushPreferencesAsync();
+            _closing = true; Microsoft.Win32.SystemEvents.SessionSwitch -= WindowsSessionChanged;
+            StopNetworkServices(); Disconnect(); _input.Dispose(); _audio.Dispose(); _recorder.Dispose(); _curtain.Dispose(); _clipboardTimer.Dispose();
+            // All input services have stopped; waiting briefly here cannot stall a hook.
+            try { preferencesSaved.Wait(TimeSpan.FromSeconds(1)); } catch (AggregateException) { }
+            DisposeDesktopExperience();
+        };
         Log("Mở LanBridge trên hai máy rồi chọn máy trong trang Thiết bị để kết nối.");
         if (preview) Log("Chế độ xem giao diện: không bật hook chuột/phím và không mở cổng mạng.");
     }
@@ -68,6 +78,7 @@ public sealed partial class MainForm : Form
         _pairing.Text = ""; _connect.Text = IsHost ? "Bật nhận kết nối" : "Kết nối máy B"; _connect.Visible = true; _copy.Visible = false;
         _hint.Text = IsHost ? "Chọn IP mạng LAN, bật nhận kết nối rồi gửi mã ghép nối cho máy A." : "Dán mã ghép nối hiển thị trên máy B vào ô bên dưới.";
         _input.IsController = !IsHost; ApplyPermissions();
+        _screenLayout.Enabled = _edge.Enabled = _pointerSpeed.Enabled = _typing.Enabled = !IsHost;
     }
 
     async Task ConnectOrListen()
@@ -101,6 +112,7 @@ public sealed partial class MainForm : Form
     {
         if (_closing || _peer != null) { peer.Dispose(); return; }
         _peer = peer; _helloReceived = false; _sessionIsHost = IsHost; bool sessionIsHost = IsHost; _session = new(); var session = _session; var token = session.Token;
+        _connectionStartedAt = Stopwatch.GetTimestamp(); _connectedMachineName = null; RefreshDesktopStatus();
         _inputDiagnosticsCapable = false;
         var inputLatency = new InputLatencySampler(); _inputLatency = inputLatency;
         Action<Packet> inputSender = packet => peer.TrySend(!sessionIsHost && _inputDiagnosticsCapable ? inputLatency.Stamp(packet) : packet);
@@ -264,6 +276,7 @@ public sealed partial class MainForm : Form
                     if (p.Flags != 2) throw new InvalidDataException("Hai máy cần dùng LanBridge 0.2.0 hoặc mới hơn. Hãy cập nhật cả A và B.");
                     if (p.Width is < 1 or > 65536 || p.Height is < 1 or > 65536) throw new InvalidDataException("Kích thước màn hình không hợp lệ.");
                     _input.RemoteWidth = p.Width; _input.RemoteHeight = p.Height; _peerName.Text = "Đối tác: " + (p.Name ?? "Máy tính")[..Math.Min(p.Name?.Length ?? 0, 100)];
+                    _connectedMachineName = (p.Name ?? "Máy tính")[..Math.Min(p.Name?.Length ?? 0, 100)]; RefreshDesktopStatus();
                     _clipboardFilesCapable = p.ClipboardFilesVersion == 1;
                     _clipboardImagesCapable = p.ClipboardImagesVersion == ClipboardImages.ProtocolVersion;
                     _inputDiagnosticsCapable = p.InputDiagnosticsVersion == 1;
@@ -425,6 +438,7 @@ public sealed partial class MainForm : Form
     void ConfirmRestart()
     {
         Emergency();
+        PrepareForLocalPrompt();
         if (MessageBox.Show(this, "Máy A yêu cầu khởi động lại máy B. Lưu công việc trước khi đồng ý.\n\nKhởi động lại sau 30 giây?", "LanBridge · Xác nhận trên máy B", MessageBoxButtons.YesNo, MessageBoxIcon.Warning, MessageBoxDefaultButton.Button2) != DialogResult.Yes) return;
         Process.Start(new ProcessStartInfo("shutdown.exe", "/r /t 30 /c \"LanBridge: khoi dong lai theo xac nhan tren may B\"") { CreateNoWindow = true, UseShellExecute = false });
         Log("Đã yêu cầu Windows khởi động lại sau 30 giây. Có thể hủy bằng shutdown /a.");
@@ -447,6 +461,7 @@ public sealed partial class MainForm : Form
     {
         _inputLatency?.Stop(); _inputLatency = null; _inputDiagnosticsCapable = false;
         var peer = _peer; _peer = null; _helloReceived = false; _session?.Cancel(); _inbox?.Complete(); _inbox = null;
+        _connectionStartedAt = 0; _connectedMachineName = null; RefreshDesktopStatus();
         CancelClipboardTransfers(); _clipboardFiles?.Dispose(); _clipboardFiles = null; _clipboardFilesCapable = false;
         _clipboardImages?.Dispose(); _clipboardImages = null; _clipboardImagesCapable = false;
         _input.ReleaseRemote(false); _input.ForceReleaseAll(); _input.CanControl = false; _input.SetBlockLocalInput(false); _input.Send = null;

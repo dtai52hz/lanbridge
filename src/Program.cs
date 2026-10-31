@@ -13,11 +13,18 @@ internal static class Program
         {
             try { ownsInstance = instance.WaitOne(0); }
             catch (AbandonedMutexException) { ownsInstance = true; }
-            if (!ownsInstance) { MessageBox.Show("LanBridge đang mở. Hãy dùng cửa sổ LanBridge hiện tại.", "LanBridge", MessageBoxButtons.OK, MessageBoxIcon.Information); return; }
+            if (!ownsInstance)
+            {
+                if (!DesktopActivation.RequestShowExisting())
+                    MessageBox.Show("LanBridge đang mở. Bấm đúp biểu tượng LanBridge ở khay hệ thống để mở lại.", "LanBridge", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                return;
+            }
         }
         Application.SetUnhandledExceptionMode(UnhandledExceptionMode.CatchException);
         Application.ThreadException += (_, e) => MessageBox.Show(e.Exception.Message, "LanBridge", MessageBoxButtons.OK, MessageBoxIcon.Error);
         var form = new MainForm(preview);
+        if (preview && args.Contains("--preview-minimum")) form.Size = form.MinimumSize;
+        if (preview && args.Contains("--preview-session")) form.SelectSessionPreview();
         var previewOutput = Array.IndexOf(args, "--preview-output");
         if (args.Contains("--preview") && previewOutput >= 0 && previewOutput + 1 < args.Length)
         {

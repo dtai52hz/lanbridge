@@ -15,6 +15,7 @@ internal static class Program
         try
         {
             Run();
+            ScreenLayoutPickerChecks.Run(Check);
             RunMainFormContract();
             Console.WriteLine($"Devices page smoke passed: {_assertions} assertions; hidden controls only, no networking or input hooks.");
             return 0;
@@ -106,12 +107,24 @@ internal static class Program
             var sessionTab = Get<TabPage>(form, "_sessionTab");
             var manualTab = Get<TabPage>(form, "_manualTab");
             var input = Get<InputRouter>(form, "_input");
+            var screenLayout = Get<ScreenLayoutPicker>(form, "_screenLayout");
             Check(tabs.SelectedTab == Get<TabPage>(form, "_deviceTab") && tabs.TabPages.Count == 3,
                 "MainForm must open on devices while retaining session and code connection pages.");
             Check(Descendants(sessionTab).Contains(Get<ComboBox>(form, "_edge"))
                 && Descendants(sessionTab).Contains(Get<ComboBox>(form, "_typing")),
                 "Position and Vietnamese typing settings must be in the session page.");
             Check(Descendants(manualTab).Contains(Get<TextBox>(form, "_pairing")), "Manual code pairing fallback is missing.");
+            screenLayout.SelectedEdge = ScreenEdge.Bottom;
+            Check(Get<ComboBox>(form, "_edge").SelectedIndex == (int)ScreenEdge.Bottom,
+                "The visual screen arrangement must update the existing position selector.");
+            Get<ComboBox>(form, "_edge").SelectedIndex = (int)ScreenEdge.Right;
+            Check(screenLayout.SelectedEdge == ScreenEdge.Right,
+                "The position selector must update the visual screen arrangement without a change loop.");
+            var pointerSpeed = Get<NumericUpDown>(form, "_pointerSpeed");
+            pointerSpeed.Value = 150;
+            Check(input.MouseSpeedPercent == 150 && pointerSpeed.Minimum == 50 && pointerSpeed.Maximum == 200,
+                "The pointer speed control must configure the input router within its documented limits.");
+            pointerSpeed.Value = 100;
             Get<ComboBox>(form, "_typing").SelectedIndex = 1;
             Check(input.TypingMode == TypingMode.VietnameseVni, "VNI selection did not reach the input router.");
             Get<ComboBox>(form, "_typing").SelectedIndex = 2;
@@ -125,9 +138,13 @@ internal static class Program
                 Get<ComboBox>(form, "_role").SelectedIndex = 1;
                 Check(!input.IsController && Get<TextBox>(form, "_pairing").ReadOnly,
                     "Manual receiver role did not update input direction and code display.");
+                Check(!screenLayout.Enabled && !pointerSpeed.Enabled,
+                    "Receiver mode must disable screen arrangement and source pointer speed controls.");
                 Get<ComboBox>(form, "_role").SelectedIndex = 0;
                 Check(input.IsController && input.ExitEdge == (ScreenEdge)index && !input.CanControl,
                     "The selected physical edge did not map to its controller enum without enabling control.");
+                Check(screenLayout.Enabled && pointerSpeed.Enabled && screenLayout.SelectedEdge == (ScreenEdge)index,
+                    "Controller mode must restore the visual arrangement and pointer speed controls.");
             }
             Get<ComboBox>(form, "_role").SelectedIndex = 1;
             var permissionChecks = Get<Dictionary<string, CheckBox>>(form, "_checks");

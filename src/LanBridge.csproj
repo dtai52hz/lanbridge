@@ -6,9 +6,13 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <AssemblyName>LanBridge</AssemblyName>
+    <ApplicationIcon>assets\lanbridge.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationHighDpiMode>PerMonitorV2</ApplicationHighDpiMode>
-    <Version>0.5.4</Version>
+    <Version>0.6.0</Version>
   </PropertyGroup>
-  <ItemGroup><PackageReference Include="NAudio" Version="2.2.1" /></ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="NAudio" Version="2.2.1" />
+    <EmbeddedResource Include="assets\lanbridge.ico" LogicalName="LanBridge.AppIcon" />
+  </ItemGroup>
 </Project>

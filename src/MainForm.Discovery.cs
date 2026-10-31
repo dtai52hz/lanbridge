@@ -109,6 +109,7 @@ public sealed partial class MainForm
                 _approvalPending = true; _devicesPage.Connecting = true; _connect.Enabled = false;
                 try
                 {
+                    PrepareForLocalPrompt();
                     using var dialog = new ConnectionApprovalDialog(request);
                     _ = dialog.Handle;
                     _approvalDialog = dialog;

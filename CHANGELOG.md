@@ -1,3 +1,11 @@
+# 0.6.0
+
+- Thêm biểu tượng LanBridge ở khay hệ thống, nút Ẩn xuống khay và menu mở lại/trả điều khiển/ngắt/thoát. Có tùy chọn nhớ Thu nhỏ xuống khay; mặc định nút − vẫn thu nhỏ vào thanh tác vụ, nút × vẫn kết thúc ứng dụng.
+- Nhớ vị trí B, bộ gõ, tốc độ chuột và tùy chọn thu nhỏ trong thiết lập riêng của người dùng; lưu nền theo trạng thái mới nhất, ghi nguyên file và dùng mặc định khi dữ liệu hỏng. Không lưu mã ghép nối, quyền hoặc phiên đang chạy.
+- Thêm sơ đồ A/B chọn bằng chuột hoặc bốn phím mũi tên, chỉnh tốc độ chuột trên B từ 50–200% và chỉ báo thời gian phiên/RTT TLS.
+- Khôi phục cửa sổ đang ẩn trước khi B hiện yêu cầu kết nối hoặc xác nhận restart; mở lại EXE gửi yêu cầu hiện cửa sổ của phiên ứng dụng hiện có. Giữ cơ chế đồng ý kết nối tại B.
+- Thêm biểu tượng nhiều kích thước cho EXE/cửa sổ/khay, bố cục phiên gọn ở cửa sổ nhỏ, kiểm tra thiết lập/đổi tốc độ và phiên TLS khi cả hai cửa sổ bị ẩn. Tương thích kết nối với 0.5.4.
+
 # 0.5.4
 
 - Tách lời gọi SendInput trên máy B sang một worker có thứ tự riêng, để luồng hook tiếp tục nhận chuột/phím vật lý và xử lý thu hồi quyền khi Windows đang nhận đầu vào chậm.

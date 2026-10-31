@@ -1,15 +1,15 @@
-# LanBridge 0.5.4
+# LanBridge 0.6.0
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: đưa chuột qua mép màn hình A để dùng chuột và bàn phím của A trên máy B. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
-[Tải bản Windows 0.5.4](https://github.com/dtai52hz/lanbridge/releases/tag/v0.5.4). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
+[Tải bản Windows 0.6.0](https://github.com/dtai52hz/lanbridge/releases/tag/v0.6.0). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 
 ## Chạy trên hai máy
 
-1. Chép `release/LanBridge-0.5.4-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
-2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.5.4 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
+1. Chép `release/LanBridge-0.6.0-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
+2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.6.0 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
 3. Trên máy có chuột/bàn phím chính (**A**), tìm tên và IP của **B** rồi bấm **Kết nối** ở thẻ máy đó. Không cần chọn vai trò A/B, nhập IP hoặc chép mã trong luồng này.
 4. Trên **B**, hộp **Yêu cầu kết nối** hiện tên và IP của A. Bấm **Đồng ý** để nhận điều khiển, hoặc **Từ chối**. Mỗi yêu cầu tìm qua danh sách đều cần xác nhận tại B; yêu cầu hết hạn sau 30 giây.
 5. Ứng dụng chuyển sang **Phiên điều khiển**. Trên A chọn B nằm bên phải/trái/trên/dưới A và bộ gõ Telex/VNI/Phím gốc. Trên B bật/tắt quyền cần cấp.
@@ -30,11 +30,25 @@ Nếu mạng chặn tìm thiết bị, vẫn có trang **Kết nối bằng mã*
 
 Ngắt phiên không tắt bộ tìm máy; đóng ứng dụng để máy ngừng quảng bá và nhận kết nối.
 
-## Thu nhỏ cửa sổ
+## Tiện dùng hằng ngày
+
+Trên trang **Phiên điều khiển**, bấm vị trí B quanh hình **Máy A** để chọn mép chuyển chuột, hoặc dùng danh sách phía dưới. Khi sơ đồ được chọn, bốn phím mũi tên chọn bên tương ứng. Các thiết lập điều khiển này được thay đổi trên A.
+
+**Tốc độ chuột trên B (%)** nhận giá trị 50–200, mặc định 100. Giảm nếu B di chuyển quá xa, tăng nếu cần rê tay nhiều. Điều chỉnh có hiệu lực trong phiên, giữ phần chuyển động nhỏ và không thay đổi thiết lập chuột của Windows hay giá trị nấc cuộn.
+
+LanBridge tự nhớ vị trí B, Telex/VNI/Phím gốc, tốc độ chuột và tùy chọn thu nhỏ tại `%LOCALAPPDATA%\LanBridge\preferences.json`. Mở lại ứng dụng để tiếp tục dùng những lựa chọn đó. Quyền và mã ghép nối không nằm trong file này. 0.6.0 vẫn kết nối được với 0.5.4; cập nhật mỗi máy nếu muốn các tiện ích mới ở máy đó.
+
+Dòng trạng thái trong phiên hiển thị thời gian đã kết nối và RTT TLS làm mượt. RTT này gồm xử lý của ứng dụng, không đo lúc ứng dụng B đã vẽ xong; mở **Đo độ trễ** nếu cần báo cáo chi tiết.
+
+## Thu nhỏ và chạy ở khay hệ thống
 
 Nút **−** chỉ thu nhỏ cửa sổ; phiên kết nối, chuột/phím và âm thanh vẫn chạy. Mở lại LanBridge từ thanh tác vụ để xem hoặc thay đổi phiên. Nút **×** đóng ứng dụng và kết thúc kết nối.
 
-Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.5.4 trên cả A và B.
+Bấm **Ẩn xuống khay** ở thanh bên để giữ ứng dụng chạy ở vùng biểu tượng gần đồng hồ Windows. Bấm đúp biểu tượng hai màn hình của LanBridge để mở lại, hoặc bấm chuột phải để **Mở LanBridge**, **Trả điều khiển / mở khóa**, **Ngắt kết nối** hay **Thoát LanBridge**. Có thể phải mở mũi tên **^** để thấy biểu tượng. Mở lại EXE 0.6.0 khi ứng dụng đã chạy cũng yêu cầu hiện cửa sổ hiện có.
+
+Đánh dấu **Thu nhỏ xuống khay** nếu muốn nút **−** tự ẩn vào khay; tùy chọn được nhớ cho lần mở sau và mặc định tắt. Nút **×** và lệnh **Thoát LanBridge** vẫn kết thúc phiên. Khi có người yêu cầu kết nối hoặc restart, B mở lại cửa sổ để bạn xác nhận. Chạy ở khay không tự mở ứng dụng sau khi khởi động Windows.
+
+Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.6.0 trên cả A và B.
 
 ## Di chuyển và cuộn chuột cùng lúc
 
@@ -70,7 +84,7 @@ Các mục có gần nhất/trung bình/cực đại, số lần từ 50 ms và 
 
 ## Ctrl+C / Ctrl+V file giữa hai máy
 
-1. Dùng **LanBridge 0.5.4 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
+1. Dùng **LanBridge 0.6.0 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
 2. Trên B, mở File Explorer, chọn một hoặc nhiều file/thư mục rồi nhấn **Ctrl+C**. Có thể làm khi đang điều khiển B bằng chuột/phím của A.
 3. LanBridge tự truyền bản sao qua phiên TLS, kiểm tra đủ dữ liệu và SHA-256. Nhật ký hiện **Clipboard đã sẵn sàng** khi toàn bộ lựa chọn đã nhận xong.
 4. Chuyển chuột về A, mở thư mục đích trong File Explorer rồi **Ctrl+V**. Không cần mở hộp **Gửi file**. Chiều A → B dùng cùng cách.
@@ -81,7 +95,7 @@ Bản nhận nằm trong bộ nhớ đệm riêng `%LOCALAPPDATA%\LanBridge\Clip
 
 ## Dùng chung ảnh chụp màn hình
 
-1. Cập nhật **LanBridge 0.5.4 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
+1. Cập nhật **LanBridge 0.6.0 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
 2. Trên B nhấn **Win+Shift+S** và chọn vùng chụp, hoặc dùng **Print Screen** theo cài đặt Windows. Công cụ chụp cần đưa ảnh vào clipboard.
 3. Chờ báo **Ảnh chụp đã sẵn sàng**, chuyển về A và **Ctrl+V** trong Paint, Word hoặc ứng dụng chat hỗ trợ dán ảnh. Chiều A → B dùng cùng cách.
 
@@ -121,7 +135,7 @@ Chuột/phím, clipboard chữ và truyền file được cho phép mặc địn
 
 ## Nếu không kết nối được
 
-- Mở LanBridge 0.5.4 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
+- Mở LanBridge 0.6.0 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
 - Nếu Windows Defender Firewall hỏi, cho phép LanBridge trên **mạng Riêng tư / Private** ở cả hai máy. Tìm thiết bị dùng **UDP 45832**; phiên dùng **TCP 45831** mặc định. Nếu TCP cổng đó đang bận, ứng dụng chọn một cổng trống và thông báo cổng thực qua danh sách. Cho phép theo file ứng dụng giúp áp dụng đúng cổng. Không cần mở cổng router hoặc dùng máy chủ Internet.
 - Nếu đã chặn trước đó, cho phép `LanBridge.exe` tại Windows Security → Firewall & network protection → Allow an app through firewall. Ứng dụng không tự sửa tường lửa.
 - Nếu máy hiện nhưng không kết nối được, kiểm tra B đang thấy yêu cầu và bấm Đồng ý trước khi hết 30 giây. Máy đang bận không nhận thêm phiên.
@@ -146,6 +160,8 @@ Số đo 0.5.3 được kiểm tra bằng TLS localhost có relay trễ, peer c�
 
 Hồi quy 0.5.4 dùng hai form ẩn/TLS thật, thay lời gọi native bằng observer chậm 35 ms: trong một lần đối chiếu, tuổi vị trí cuối giảm từ khoảng 1.240 ms trên mã cũ xuống 84 ms, số lời gọi giảm từ 47 xuống 19. Khi native bị giữ, luồng hook vẫn phản hồi; ACK phải chờ native, thu hồi quyền không được ACK thành công cho công việc cũ, và cấp lại quyền phải tiếp tục nhận input. Đây là tải tổng hợp, không cài hook hay tạo đầu vào thật; độ mượt sau bản sửa cần đo lại trên B.
 
+Tiện ích 0.6.0 được kiểm tra bằng thiết lập trong thư mục tạm, biểu mẫu ẩn và TLS loopback: thay đổi liên tục vẫn lưu trạng thái cuối, cấu hình hỏng dùng mặc định, sơ đồ và tốc độ phản ánh đúng vào bộ điều khiển, ẩn hai cửa sổ vẫn truyền chuột/phím/chat/clipboard giả/file. Các kiểm tra không tạo biểu tượng khay thật hay cài hook trên desktop. Cần thử biểu tượng khay, khôi phục bằng EXE và hộp xác nhận trên Windows thực tế.
+
 **Chưa kiểm chứng trên hai PC thật:** broadcast/multicast qua router/tường lửa thực tế, chuyển mép với chuột thực, gõ vào từng ứng dụng trên B, nhiều màn hình/DPI, âm thanh WASAPI, ghi desktop và màn che. Kiểm tra loopback không thay thế việc thử mạng Wi-Fi/Ethernet A/B của bạn.
 
 Con trỏ trên A hiện tại vẫn hiển thị ở điểm căn giữa khi đang điều khiển B. Bản này không có cửa sổ xem trực tiếp màn hình B trên A, kéo thả file giữa hai desktop, mã hóa video thời gian thực, tự kết nối sau reboot hoặc điều khiển game dùng raw input.
@@ -162,9 +178,11 @@ pwsh -File .\scripts\build.ps1 -Task Test
 pwsh -File .\scripts\build.ps1 -Task Publish
 ```
 
-Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.5.4-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
+Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.6.0-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
 
 `dotnet run --project src/LanBridge.csproj -- --preview` chỉ mở giao diện, không bật hook hay lắng nghe cổng. Có thể thêm `--preview-output C:\duong-dan\preview.png` để xuất hình rồi tự đóng.
+
+Thêm `--preview-session` để chụp trang phiên, `--preview-minimum` để dùng kích thước nhỏ nhất hoặc `--preview-latency` để chụp bảng số đo. Preview không đọc/ghi thiết lập của người dùng hay tạo biểu tượng khay. Biểu tượng ứng dụng có nguồn SVG trong `src/assets`; tạo lại ICO bằng `pwsh -File scripts/generate-icon.ps1`.
 
 Mã nguồn: `DevicesPage.cs` danh sách thiết bị, `Discovery.cs` UDP, `MainForm.Discovery.cs` luồng tìm/kết nối/xác nhận; `MainForm.cs` phiên điều khiển, `NativeInput.cs` đầu vào, `VietnameseInput.cs` bộ gõ, `Transport.cs` TLS/heartbeat, `FileTransfer.cs` truyền file, `MediaServices.cs` media. Chi tiết kiểm thử ở [TESTING.md](TESTING.md).
 

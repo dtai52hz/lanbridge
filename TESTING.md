@@ -7,6 +7,8 @@ Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10
 | TransportSmoke | TLS thật trên localhost; certificate pin, sai bí mật; một kết nối; Unicode/binary; backpressure; heartbeat; gói quá lớn/JSON lỗi/cắt cụt; timeout xác thực; kết nối lại. Tạm dừng writer, gửi 80.000 mẫu chuột rồi kiểm tra gộp trước mã hóa, giữ ranh giới cuộn/phím/nút/chữ/quyền, snapshot dữ liệu và JSON input gọn tương thích cả giá trị 0/false. Quyền false vẫn được gửi đầy đủ. |
 | DiscoverySmoke | UDP loopback thật: query, trả lời, cập nhật trạng thái, hết hạn, giới hạn/gói lỗi, địa chỉ lấy từ nguồn gửi và không phát bí mật. TLS xác nhận: pin, đồng ý, từ chối, đang bận, hủy từ máy A, dữ liệu trước chấp nhận và hết hạn 30 giây đều dọn trạng thái. Không phát broadcast ra LAN trong kiểm tra. |
 | DevicesPageSmoke | Form ẩn: danh sách thiết bị, trạng thái bận/kết nối/làm mới, metadata IP/pin mới, không thay thẻ khi chỉ heartbeat. Giao diện chính mặc định ở Thiết bị; preview không mở mạng/hook; mặc định hộp xác nhận từ chối; quyền máy khác không ghi đè quyền cục bộ. |
+| PreferencesSmoke | File JSON trong thư mục tạm: mọi vị trí/bộ gõ, tốc độ 50–200%, tùy chọn khay, giới hạn kích thước/độ sâu/schema, dữ liệu hỏng từng trường và khóa file. Ghi nguyên file, giữ bản cũ nếu không ghi được, xóa temp và chỉ lưu trường tiện dùng. |
+| DesktopSmoke | MainForm ẩn: preview tách khỏi thiết lập thật/khay thật; khôi phục lựa chọn vào UI và input router, 80 lần ghi chồng nhau giữ bản cuối, thu nhỏ tùy chọn/ẩn/mở lại/chuẩn bị hộp xác nhận và đóng sạch. |
 | FileSmoke | Tên tiếng Việt; file nhị phân, file rỗng; xác minh hash và biên byte; không ghi đè; chặn đường dẫn/tên thiết bị; từ chối khi không có quyền; xóa file dang dở. |
 | ClipboardFilesSmoke | Nhiều file/thư mục tiếng Việt, thư mục trống, giữ tên và SHA-256, hai chiều, không echo, lỗi hash, hủy và thay lô, đường dẫn vượt phạm vi, giới hạn, junction thật và giữ cache đã hoàn tất. Điều tiết từng khối: không gửi tiếp trước xác nhận đúng ID/offset của khối đã ghi, hủy khi đang chờ ACK. Không đọc/ghi clipboard hệ điều hành. |
 | ClipboardSessionSmoke | Hai form ẩn, TLS thật, clipboard giả riêng: text/file hai chiều, thỏa thuận phiên bản, hai quyền, chat trong lúc truyền 24 MB, clipboard bận và thử lại, không ghi đè lần sao chép mới, hủy file .partial khi ngắt, callback phiên cũ bị bỏ qua. |
@@ -51,9 +53,17 @@ Hồi quy 0.5.4 cho khâu nhận đầu vào:
 
 Toàn bộ 13 bộ kiểm tra đạt cho 0.5.4, gồm 1.608 assertions NativeInputSmoke và 380 assertions SessionSmoke. Lần chạy tổng ghi nhận 19 native jobs và tuổi vị trí cuối 75,8 ms trong kịch bản 35 ms giả lập; đây vẫn là phép thử tổng hợp.
 
+Hồi quy tiện dùng 0.6.0:
+
+- Kiểm tra tốc độ 100% giữ chuyển động cũ, 50% cộng dồn phần lẻ, 200% giữ chiều/clamp, đổi 175% trong lúc giữ Ctrl/kéo chuột không nhả phím hoặc thêm warp. Các mép vẫn chuyển tức thì; delta cuộn giữ nguyên.
+- Sơ đồ thử đủ bốn vị trí bằng chuột/phím, đồng bộ với danh sách, bỏ thao tác khi bị vô hiệu hóa và xuất bitmap ở nhiều kích thước. Kiểm tra vai trò B không sửa cấu hình chuột của A.
+- SessionSmoke ẩn cả hai form rồi gửi input, chat, clipboard chữ giả hai chiều và file kiểm SHA-256; phiên vẫn hoạt động, mở lại chỉ đổi trạng thái cửa sổ. Không tạo NotifyIcon thật hoặc thay clipboard hệ điều hành.
+
+Toàn bộ 15 bộ kiểm tra đạt cho 0.6.0: DevicesPageSmoke 81, PreferencesSmoke 305, DesktopSmoke 30, NativeInputSmoke 1.636 và SessionSmoke 398 assertions. Hồi quy native giả chậm 35 ms vẫn giữ kết nối và luồng hook rảnh; lần chạy tổng ghi nhận 20 native jobs, vị trí cuối 60,2 ms. Đã xuất và xem bố cục phiên ở 1120×860 và 1060×780; DrawToBitmap có hạn chế với phần native của ComboBox/RichTextBox, nên hiển thị thực trên desktop vẫn cần kiểm tra thủ công.
+
 ## Thử trên hai máy thật
 
-1. Mở bản 0.5.4 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
+1. Mở bản 0.6.0 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
 2. Chọn đúng vị trí B; thử chuyển ngay sang B, trở lại A, sang B tiếp mà không đợi và hotkey Ctrl+Alt+F12. Thử trái/phải, cuộn, middle/X buttons và gõ trong Notepad trên B. Trên A chọn Telex gõ `tieengs Vieetj`, VNI gõ `tie6ng1 Vie6t5`; cả hai cần ra `tiếng Việt`. Thử Backspace, chữ hoa, Ctrl+C/V/Z, Shift+mũi tên, Shift+click và chuyển sang Phím gốc. Tắt bộ gõ ngoài nếu can thiệp; không cần UniKey B cho chế độ tích hợp.
 3. Trong lúc giữ Shift hoặc nút chuột trên B, rút mạng hoặc ngắt kết nối. Kiểm tra A lấy lại chuột và B không còn phím/nút bị giữ.
 4. Trên B tắt quyền Chuột/phím khi A đang điều khiển. Xác minh A nhận lại chuột và không tiếp tục thao tác được B cho tới khi B bật quyền lại.
@@ -67,5 +77,6 @@ Toàn bộ 13 bộ kiểm tra đạt cho 0.5.4, gồm 1.608 assertions NativeInp
 12. Bật Clipboard, tắt Truyền file: trên B chụp vùng bằng Win+Shift+S rồi về A Ctrl+V trong Paint/Word/ứng dụng chat. Thử chiều ngược, ảnh 4K, Print Screen theo cài đặt Windows, sao chép ảnh trong trình duyệt, clipboard bị ứng dụng khác giữ, và chụp ảnh mới/sao chép chữ/file trong lúc ảnh cũ đang nhận. Tắt Clipboard phải chặn ảnh nhưng không làm ngắt phiên chuột/phím.
 13. Mở trang dài trên B, vừa rê chuột qua các vùng khác nhau vừa cuộn dọc/ngang, đổi chiều, giữ Ctrl/Shift và kéo thanh cuộn. Thử các mức polling chuột đang có (125/500/1.000/8.000 Hz), lúc gửi file/ảnh và thu nhỏ ứng dụng. Kiểm tra không mất nấc, cuộn sai vị trí, dồn thao tác cũ hoặc tự ngắt; so sánh Ethernet/Wi-Fi và ghi lại tải máy nếu còn giật.
 14. Trên A/B mở Đo độ trễ, thao tác 15–20 giây tới khi tái hiện khựng, tạm dừng hiển thị rồi chép hai báo cáo. So sánh RTT với chờ gửi trên A, chờ pump/SendInput/hook-age trên B; giữ cả tuổi mẫu và số mẫu. Thử lại cả hai bằng dây LAN nếu có sẵn để đối chiếu đường Wi-Fi. RTT thấp hoặc SendInput gọi nhanh chưa xác nhận target app trên B đã nhận/vẽ xong.
+15. Chọn vị trí B bằng sơ đồ và danh sách, đổi tốc độ 50/100/200% khi đang rê/kéo/cuộn, đổi bộ gõ rồi đóng/mở lại. Các lựa chọn phải được nhớ; ghép nối và quyền vẫn đi theo phiên. Bật/tắt Thu nhỏ xuống khay, thử nút −, nút Ẩn xuống khay, bấm đúp/chuột phải biểu tượng, mở lại EXE khi đang ẩn và lệnh Thoát. Khi B đang ẩn, A yêu cầu kết nối: cửa sổ B phải hiện lại để người dùng Đồng ý/Từ chối; thử cả timeout. Nút × vẫn thoát dù tùy chọn khay đã bật.
 
 Các bước trên là kế hoạch xác minh thủ công; chưa được đánh dấu đạt cho hai máy thật.

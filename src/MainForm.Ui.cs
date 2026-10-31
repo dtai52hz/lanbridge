@@ -4,6 +4,11 @@ namespace LanBridge;
 
 public sealed partial class MainForm
 {
+    readonly ScreenLayoutPicker _screenLayout = new();
+    readonly NumericUpDown _pointerSpeed = new() { Minimum = 50, Maximum = 200, Increment = 10, Value = 100 };
+    readonly CheckBox _minimizeToTray = new();
+    readonly Label _connectionSummary = new();
+
     void BuildUi()
     {
         var shell = new TableLayoutPanel
@@ -53,13 +58,26 @@ public sealed partial class MainForm
         _role.SelectedIndexChanged += (_, _) => UpdateRole();
         _edge.SelectedIndexChanged += (_, _) =>
         {
+            if (_edge.SelectedIndex < 0) return;
+            _screenLayout.SelectedEdge = (ScreenEdge)_edge.SelectedIndex;
             if (!IsHost && _peer != null) _input.ConfigureController(_helloReceived && _permissions.Input, (ScreenEdge)_edge.SelectedIndex);
+            QueuePreferenceSave();
+        };
+        _screenLayout.SelectedEdgeChanged += (_, _) =>
+        {
+            if (_screenLayout.Enabled) _edge.SelectedIndex = (int)_screenLayout.SelectedEdge;
         };
         _typing.SelectedIndexChanged += (_, _) =>
         {
             _input.TypingMode = (TypingMode)_typing.SelectedIndex;
             Log(_typing.Text + ". Telex/VNI dùng bộ gõ trong LanBridge; không cần bật UniKey trên hai máy.");
+            QueuePreferenceSave();
         };
+        _pointerSpeed.ValueChanged += (_, _) =>
+        {
+            _input.MouseSpeedPercent = (int)_pointerSpeed.Value; QueuePreferenceSave();
+        };
+        _minimizeToTray.CheckedChanged += (_, _) => QueuePreferenceSave();
         _connect.Click += async (_, _) => await ConnectOrListen();
         _copy.Click += (_, _) =>
         {
@@ -107,6 +125,8 @@ public sealed partial class MainForm
             for (int index = 0; index < navigation.Count; index++) navigation[index].SetNavigationState(index == Math.Max(0, _tabs.SelectedIndex));
         }
         _tabs.SelectedIndexChanged += (_, _) => HighlightNavigation();
+        _tabs.HandleCreated += (_, _) => HighlightNavigation();
+        Shown += (_, _) => HighlightNavigation();
         HighlightNavigation();
         var shortcut = new TableLayoutPanel
         {
@@ -121,6 +141,11 @@ public sealed partial class MainForm
         shortcut.Controls.Add(UiLabel("Ctrl + Alt + F12", 15, Color.White, true), 0, 1);
         shortcut.Controls.Add(UiLabel("Trả chuột và bàn phím về A.\nTrên B: nhả phím, tắt khóa\nvà bỏ màn che ngay.", 9, Muted), 0, 2);
         content.Controls.Add(shortcut, 0, 5);
+        var backgroundActions = new Panel { Dock = DockStyle.Fill, Margin = Padding.Empty, BackColor = Card };
+        var hideToTray = new DarkButton(); StyleButton(hideToTray, "Ẩn xuống khay", 0, 0, 180, 34, Color.FromArgb(39, 51, 69));
+        hideToTray.ForeColor = Color.White; hideToTray.Dock = DockStyle.Bottom; hideToTray.Margin = Padding.Empty;
+        hideToTray.Click += (_, _) => HideToTray(); backgroundActions.Controls.Add(hideToTray);
+        content.Controls.Add(backgroundActions, 0, 6);
         var footer = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = Padding.Empty, BackColor = Card };
         footer.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         footer.RowStyles.Add(new RowStyle(SizeType.Absolute, 28));
@@ -128,7 +153,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.5.4", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.6.0", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 
@@ -195,20 +220,41 @@ public sealed partial class MainForm
         var main = new TableLayoutPanel
         {
             Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
-            Padding = new Padding(22, 17, 22, 22), Margin = Padding.Empty
+            Padding = new Padding(22, 17, 22, 22), Margin = Padding.Empty, AutoScroll = true
         };
         main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var height in new[] { 90, 182, 78, 70 }) main.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        foreach (var height in new[] { 142, 182, 70, 60 }) main.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); _sessionTab.Controls.Add(main);
-        var inputSettings = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = Padding.Empty };
-        inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50)); inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 50));
-        inputSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, 27)); inputSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
-        inputSettings.Controls.Add(UiLabel("VỊ TRÍ MÁY B", 8.5f, Accent, true), 0, 0);
-        inputSettings.Controls.Add(UiLabel("BỘ GÕ TRÊN MÁY A", 8.5f, Accent, true), 1, 0);
+        var inputSettings = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 0, 0, 9) };
+        inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 53)); inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
+        inputSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        var placement = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, Margin = new Padding(0, 0, 15, 0) };
+        placement.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        placement.RowStyles.Add(new RowStyle(SizeType.Absolute, 22)); placement.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        placement.RowStyles.Add(new RowStyle(SizeType.Absolute, 35));
+        placement.Controls.Add(UiLabel("CHỌN VỊ TRÍ MÁY B", 8.5f, Accent, true), 0, 0);
+        _screenLayout.Dock = DockStyle.Fill; _screenLayout.Margin = Padding.Empty; _screenLayout.Font = new Font("Segoe UI", 8.5f, FontStyle.Bold);
+        placement.Controls.Add(_screenLayout, 0, 1);
         StyleCombo(_edge); _edge.Items.AddRange(["B nằm bên phải A →", "B nằm bên trái A ←", "B nằm phía trên A ↑", "B nằm phía dưới A ↓"]);
-        _edge.SelectedIndex = 0; _edge.Margin = new Padding(0, 0, 10, 18); inputSettings.Controls.Add(_edge, 0, 1);
+        _edge.SelectedIndex = 0; _edge.Margin = Padding.Empty; _edge.AccessibleName = "Vị trí máy B"; placement.Controls.Add(_edge, 0, 2);
+        inputSettings.Controls.Add(placement, 0, 0);
+        var typingSettings = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5, Margin = Padding.Empty };
+        typingSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        foreach (var height in new[] { 22, 37, 22, 31 }) typingSettings.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        typingSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        typingSettings.Controls.Add(UiLabel("BỘ GÕ TRÊN MÁY A", 8.5f, Accent, true), 0, 0);
         StyleCombo(_typing); _typing.Items.AddRange(["Gõ: Tiếng Việt Telex", "Gõ: Tiếng Việt VNI", "Gõ: Phím gốc"]);
-        _typing.SelectedIndex = 0; _typing.Margin = new Padding(0, 0, 0, 18); inputSettings.Controls.Add(_typing, 1, 1);
+        _typing.SelectedIndex = 0; _typing.Margin = Padding.Empty; typingSettings.Controls.Add(_typing, 0, 1);
+        typingSettings.Controls.Add(UiLabel("TỐC ĐỘ CHUỘT TRÊN B (%)", 8.5f, Accent, true), 0, 2);
+        _pointerSpeed.Dock = DockStyle.Fill; _pointerSpeed.Margin = new Padding(0, 0, 0, 3);
+        _pointerSpeed.BackColor = Card; _pointerSpeed.ForeColor = Color.White; _pointerSpeed.BorderStyle = BorderStyle.FixedSingle;
+        _pointerSpeed.Font = new Font("Segoe UI", 10); _pointerSpeed.TextAlign = HorizontalAlignment.Center;
+        _pointerSpeed.AccessibleName = "Tốc độ chuột trên máy B, phần trăm";
+        typingSettings.Controls.Add(_pointerSpeed, 0, 3);
+        _minimizeToTray.Text = "Thu nhỏ xuống khay"; _minimizeToTray.Dock = DockStyle.Fill;
+        _minimizeToTray.Font = new Font("Segoe UI", 8.5f); _minimizeToTray.ForeColor = Muted; _minimizeToTray.Margin = Padding.Empty;
+        typingSettings.Controls.Add(_minimizeToTray, 0, 4);
+        inputSettings.Controls.Add(typingSettings, 1, 0);
         main.Controls.Add(inputSettings, 0, 0);
 
         var permissionCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(13, 13, 13, 10), Margin = new Padding(0, 0, 0, 13) };
@@ -236,24 +282,27 @@ public sealed partial class MainForm
         AddAction("Ghi hình", () => RequestFeature("recording")); AddAction("Khóa B", () => RequestFeature("block"));
         AddAction("Màn che", () => RequestFeature("privacy")); AddAction("Restart B", RestartRemote);
         BindGridWidths(_actions, 6); main.Controls.Add(actionCard, 0, 2);
-        var liveStatus = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 2, Margin = Padding.Empty };
+        var liveStatus = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Margin = Padding.Empty };
         liveStatus.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); liveStatus.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 133));
-        liveStatus.RowStyles.Add(new RowStyle(SizeType.Absolute, 33)); liveStatus.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
+        liveStatus.RowStyles.Add(new RowStyle(SizeType.Absolute, 20)); liveStatus.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
+        liveStatus.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         ConfigureUiLabel(_remoteState, 9.5f, Muted, true); _remoteState.Text = "CHƯA CÓ PHIÊN KẾT NỐI";
         _remoteState.TextAlign = ContentAlignment.MiddleLeft; liveStatus.Controls.Add(_remoteState, 0, 0);
         var endSession = new DarkButton(); StyleButton(endSession, "Ngắt kết nối", 0, 0, 133, 30, Color.FromArgb(234, 94, 112));
-        endSession.Dock = DockStyle.Fill; endSession.Margin = new Padding(0, 0, 0, 4); endSession.Click += (_, _) => Disconnect();
+        endSession.Dock = DockStyle.Fill; endSession.Margin = new Padding(0, 0, 0, 5); endSession.Click += (_, _) => Disconnect();
         endSession.Enabled = _disconnect.Enabled;
         _disconnect.EnabledChanged += (_, _) => endSession.Enabled = _disconnect.Enabled;
-        liveStatus.Controls.Add(endSession, 1, 0);
-        ConfigureUiLabel(_featureStatus, 8.5f, Muted); _featureStatus.Margin = new Padding(0, 6, 0, 6);
-        liveStatus.Controls.Add(_featureStatus, 0, 1);
+        liveStatus.Controls.Add(endSession, 1, 0); liveStatus.SetRowSpan(endSession, 2);
+        ConfigureUiLabel(_connectionSummary, 8, Muted); _connectionSummary.Text = "Kết nối hai máy để xem độ trễ và thời gian phiên.";
+        _connectionSummary.TextAlign = ContentAlignment.MiddleLeft; liveStatus.Controls.Add(_connectionSummary, 0, 1);
+        ConfigureUiLabel(_featureStatus, 8.5f, Muted); _featureStatus.Margin = new Padding(0, 2, 0, 2);
+        liveStatus.Controls.Add(_featureStatus, 0, 2);
         var diagnostics = new DarkButton(); StyleButton(diagnostics, "Đo độ trễ", 0, 0, 133, 30, Accent);
-        diagnostics.Dock = DockStyle.Fill; diagnostics.Margin = new Padding(0, 3, 0, 4);
-        diagnostics.Click += (_, _) => ShowLatencyDiagnostics(); liveStatus.Controls.Add(diagnostics, 1, 1);
+        diagnostics.Dock = DockStyle.Fill; diagnostics.Margin = new Padding(0, 0, 0, 1);
+        diagnostics.Click += (_, _) => ShowLatencyDiagnostics(); liveStatus.Controls.Add(diagnostics, 1, 2);
         main.Controls.Add(liveStatus, 0, 3);
 
-        var logCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(14), Margin = Padding.Empty };
+        var logCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(14), Margin = Padding.Empty, MinimumSize = new Size(0, 116) };
         var logContent = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = Card, Margin = Padding.Empty };
         logContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
         logContent.RowStyles.Add(new RowStyle(SizeType.Absolute, 26)); logContent.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
@@ -336,7 +385,7 @@ public sealed partial class MainForm
 
     void AddAction(string title, Action action)
     {
-        var button = new DarkButton(); StyleButton(button, title, 0, 0, 100, 40, Color.FromArgb(39, 51, 69));
+        var button = new DarkButton(); StyleButton(button, title, 0, 0, 100, 35, Color.FromArgb(39, 51, 69));
         button.ForeColor = Color.White; button.Margin = new Padding(4, 3, 4, 0);
         button.Click += (_, _) => { try { action(); } catch (Exception error) { Log(error.Message); } };
         _actions.Controls.Add(button);

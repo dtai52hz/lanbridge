@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" fill="none">
+  <title>LanBridge</title>
+  <rect x="8" y="8" width="240" height="240" rx="49" fill="#10141D"/>
+  <g stroke-linecap="round" stroke-linejoin="round">
+    <path d="M91.5 129V151M72 151H109" stroke="#2FD0B1" stroke-width="15"/>
+    <rect x="36" y="49" width="111" height="80" rx="12" fill="#173F40" stroke="#2FD0B1" stroke-width="15"/>
+    <path d="M164.5 199V221M145 221H184" stroke="#429FFF" stroke-width="15"/>
+    <rect x="109" y="119" width="111" height="80" rx="12" fill="#17304C" stroke="#429FFF" stroke-width="15"/>
+    <path d="M119 101H137V147H155" stroke="#E7FAF6" stroke-width="12"/>
+  </g>
+</svg>

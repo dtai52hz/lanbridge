@@ -247,6 +247,7 @@ public sealed partial class MainForm
     }
     protected override void WndProc(ref Message message)
     {
+        if (DesktopActivation.IsShowMessage(message.Msg) && !_closing) { RestoreFromTray(); return; }
         base.WndProc(ref message);
         if (message.Msg == 0x031D && !_closing) SyncClipboard(); // WM_CLIPBOARDUPDATE
     }
