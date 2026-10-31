@@ -1,15 +1,15 @@
-# LanBridge 0.6.0
+# LanBridge 0.6.1
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: đưa chuột qua mép màn hình A để dùng chuột và bàn phím của A trên máy B. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
-[Tải bản Windows 0.6.0](https://github.com/dtai52hz/lanbridge/releases/tag/v0.6.0). Đăng nhập tài khoản được cấp quyền vào repository private để tải gói ZIP, rồi giải nén trên cả hai máy.
+[Tải bản Windows 0.6.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.6.1): chọn **LanBridge-0.6.1-Setup-x64.exe** để cài tự động, hoặc ZIP để chạy trực tiếp. Mã nguồn công khai theo [giấy phép MIT](LICENSE); có thể tải, sửa và phân phối theo điều kiện trong giấy phép.
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 
 ## Chạy trên hai máy
 
-1. Chép `release/LanBridge-0.6.0-win-x64/LanBridge.exe` sang **cả hai máy** rồi mở. Không cần cài .NET để dùng bản phát hành này.
-2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.6.0 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
+1. Trên **cả hai máy**, chạy bộ cài `LanBridge-0.6.1-Setup-x64.exe`, rồi mở **LanBridge** từ Start menu. Hoặc giải nén ZIP và mở `LanBridge.exe`. Không cần cài .NET riêng.
+2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge 0.6.1 trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
 3. Trên máy có chuột/bàn phím chính (**A**), tìm tên và IP của **B** rồi bấm **Kết nối** ở thẻ máy đó. Không cần chọn vai trò A/B, nhập IP hoặc chép mã trong luồng này.
 4. Trên **B**, hộp **Yêu cầu kết nối** hiện tên và IP của A. Bấm **Đồng ý** để nhận điều khiển, hoặc **Từ chối**. Mỗi yêu cầu tìm qua danh sách đều cần xác nhận tại B; yêu cầu hết hạn sau 30 giây.
 5. Ứng dụng chuyển sang **Phiên điều khiển**. Trên A chọn B nằm bên phải/trái/trên/dưới A và bộ gõ Telex/VNI/Phím gốc. Trên B bật/tắt quyền cần cấp.
@@ -19,6 +19,18 @@
 **Chỉ các máy đang mở LanBridge mới hiện trong danh sách.** Cài/chạy file một lần rồi đóng ứng dụng không làm máy luôn xuất hiện. Máy đã đóng/mất mạng sẽ được loại khỏi danh sách sau khoảng 7–9 giây. Ứng dụng không tự cài dịch vụ hay tự mở cùng Windows; sau khi khởi động lại B cần mở lại LanBridge.
 
 Tên máy, cổng kết nối, trạng thái bận và dấu vân tay chứng chỉ được thông báo qua UDP trong LAN; mã ghép nối bí mật không được phát qua UDP. Máy nhận xác nhận từng yêu cầu trước khi cho phép phiên TLS. Dấu vân tay được kiểm tra theo thiết bị vừa phát hiện; danh sách LAN không phải danh bạ tài khoản đã xác minh.
+
+## Cài đặt và gỡ cài đặt
+
+Bộ cài EXE chép ứng dụng vào `%LOCALAPPDATA%\Programs\LanBridge`, tạo mục Start menu và mục gỡ cài đặt cho tài khoản Windows hiện tại. Có thể chọn thêm shortcut Desktop. Đóng LanBridge đang chạy trước khi cài/cập nhật; bộ cài không tự đóng phiên làm việc. Cài xong, mở LanBridge từ Start menu để kết nối hai máy.
+
+Gỡ tại **Windows Settings → Apps → Installed apps → LanBridge → Uninstall**. Thiết lập và cache clipboard trong `%LOCALAPPDATA%\LanBridge`, file đã nhận ở Downloads và bản ghi ở Videos được giữ lại. Cài đặt không thêm dịch vụ hoặc tự mở cùng Windows.
+
+Cài im lặng, dùng thư mục mặc định và không tự mở ứng dụng sau cài:
+
+```powershell
+Start-Process .\LanBridge-0.6.1-Setup-x64.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
+```
 
 ## Kết nối bằng mã khi cần
 
@@ -48,7 +60,7 @@ Bấm **Ẩn xuống khay** ở thanh bên để giữ ứng dụng chạy ở v
 
 Đánh dấu **Thu nhỏ xuống khay** nếu muốn nút **−** tự ẩn vào khay; tùy chọn được nhớ cho lần mở sau và mặc định tắt. Nút **×** và lệnh **Thoát LanBridge** vẫn kết thúc phiên. Khi có người yêu cầu kết nối hoặc restart, B mở lại cửa sổ để bạn xác nhận. Chạy ở khay không tự mở ứng dụng sau khi khởi động Windows.
 
-Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.6.0 trên cả A và B.
+Từ 0.3.1, chuột/phím chạy trên một luồng xử lý riêng, không chờ thao tác vẽ, kéo hoặc thu nhỏ cửa sổ. Các vị trí chuột liên tiếp được gộp khi có dữ liệu dồn, giữ vị trí mới nhất trước mỗi phím/nút/cuộn hoặc chuyển máy. Mất mạng vẫn tự nhả điều khiển. Nếu đang dùng bản cũ, đóng LanBridge rồi thay bản 0.6.1 trên cả A và B.
 
 ## Di chuyển và cuộn chuột cùng lúc
 
@@ -84,7 +96,7 @@ Các mục có gần nhất/trung bình/cực đại, số lần từ 50 ms và 
 
 ## Ctrl+C / Ctrl+V file giữa hai máy
 
-1. Dùng **LanBridge 0.6.0 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
+1. Dùng **LanBridge 0.6.1 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
 2. Trên B, mở File Explorer, chọn một hoặc nhiều file/thư mục rồi nhấn **Ctrl+C**. Có thể làm khi đang điều khiển B bằng chuột/phím của A.
 3. LanBridge tự truyền bản sao qua phiên TLS, kiểm tra đủ dữ liệu và SHA-256. Nhật ký hiện **Clipboard đã sẵn sàng** khi toàn bộ lựa chọn đã nhận xong.
 4. Chuyển chuột về A, mở thư mục đích trong File Explorer rồi **Ctrl+V**. Không cần mở hộp **Gửi file**. Chiều A → B dùng cùng cách.
@@ -95,7 +107,7 @@ Bản nhận nằm trong bộ nhớ đệm riêng `%LOCALAPPDATA%\LanBridge\Clip
 
 ## Dùng chung ảnh chụp màn hình
 
-1. Cập nhật **LanBridge 0.6.0 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
+1. Cập nhật **LanBridge 0.6.1 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
 2. Trên B nhấn **Win+Shift+S** và chọn vùng chụp, hoặc dùng **Print Screen** theo cài đặt Windows. Công cụ chụp cần đưa ảnh vào clipboard.
 3. Chờ báo **Ảnh chụp đã sẵn sàng**, chuyển về A và **Ctrl+V** trong Paint, Word hoặc ứng dụng chat hỗ trợ dán ảnh. Chiều A → B dùng cùng cách.
 
@@ -135,7 +147,7 @@ Chuột/phím, clipboard chữ và truyền file được cho phép mặc địn
 
 ## Nếu không kết nối được
 
-- Mở LanBridge 0.6.0 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
+- Mở LanBridge 0.6.1 trên cả hai máy cùng mạng rồi bấm **Làm mới**. Wi-Fi khách hoặc tính năng AP/client isolation có thể chặn liên lạc giữa máy; danh sách không phát hiện máy ở VLAN khác hoặc chỉ có bản cũ.
 - Nếu Windows Defender Firewall hỏi, cho phép LanBridge trên **mạng Riêng tư / Private** ở cả hai máy. Tìm thiết bị dùng **UDP 45832**; phiên dùng **TCP 45831** mặc định. Nếu TCP cổng đó đang bận, ứng dụng chọn một cổng trống và thông báo cổng thực qua danh sách. Cho phép theo file ứng dụng giúp áp dụng đúng cổng. Không cần mở cổng router hoặc dùng máy chủ Internet.
 - Nếu đã chặn trước đó, cho phép `LanBridge.exe` tại Windows Security → Firewall & network protection → Allow an app through firewall. Ứng dụng không tự sửa tường lửa.
 - Nếu máy hiện nhưng không kết nối được, kiểm tra B đang thấy yêu cầu và bấm Đồng ý trước khi hết 30 giây. Máy đang bận không nhận thêm phiên.
@@ -176,14 +188,22 @@ Cài [.NET 10 SDK](https://dotnet.microsoft.com/en-us/download/dotnet/10.0) nế
 pwsh -File .\scripts\build.ps1 -Task Build
 pwsh -File .\scripts\build.ps1 -Task Test
 pwsh -File .\scripts\build.ps1 -Task Publish
+pwsh -File .\scripts\setup-installer-tools.ps1
+pwsh -File .\scripts\build.ps1 -Task Installer
 ```
 
-Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.6.0-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
+`Publish` tạo bản chạy độc lập và ZIP; `Installer` xuất bản rồi tạo bộ cài EXE cùng file SHA-256 cho cả ZIP/EXE. Script chuẩn bị compiler tải [Inno Setup 6.7.4 chính thức](https://github.com/jrsoftware/issrc/releases/tag/is-6_7_4), kiểm tra SHA-256 và chữ ký nhà phát hành, rồi đặt bản portable trong `.tools`. Có thể gọi `scripts/build-installer.ps1 -CompilerPath C:\duong-dan\ISCC.exe` sau khi đã Publish. Script Inno Setup nằm ở `installer/LanBridge.iss`.
+
+Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.6.1-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
 
 `dotnet run --project src/LanBridge.csproj -- --preview` chỉ mở giao diện, không bật hook hay lắng nghe cổng. Có thể thêm `--preview-output C:\duong-dan\preview.png` để xuất hình rồi tự đóng.
 
 Thêm `--preview-session` để chụp trang phiên, `--preview-minimum` để dùng kích thước nhỏ nhất hoặc `--preview-latency` để chụp bảng số đo. Preview không đọc/ghi thiết lập của người dùng hay tạo biểu tượng khay. Biểu tượng ứng dụng có nguồn SVG trong `src/assets`; tạo lại ICO bằng `pwsh -File scripts/generate-icon.ps1`.
 
 Mã nguồn: `DevicesPage.cs` danh sách thiết bị, `Discovery.cs` UDP, `MainForm.Discovery.cs` luồng tìm/kết nối/xác nhận; `MainForm.cs` phiên điều khiển, `NativeInput.cs` đầu vào, `VietnameseInput.cs` bộ gõ, `Transport.cs` TLS/heartbeat, `FileTransfer.cs` truyền file, `MediaServices.cs` media. Chi tiết kiểm thử ở [TESTING.md](TESTING.md).
+
+## Mã nguồn mở
+
+LanBridge được phát hành theo MIT; xem [LICENSE](LICENSE). Giữ thông báo bản quyền và giấy phép khi phân phối lại. Thành phần bên thứ ba có giấy phép riêng trong [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md) và thư mục `licenses`. Có thể báo lỗi hoặc gửi thay đổi tại [GitHub](https://github.com/dtai52hz/lanbridge).
 
 API Windows: [low-level hooks](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowshookexw), [SendInput](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-sendinput), [TLS/SslStream](https://learn.microsoft.com/en-us/dotnet/api/system.net.security.sslstream), [layered windows](https://learn.microsoft.com/en-us/windows/win32/winmsg/window-features#layered-windows).

@@ -2,6 +2,22 @@
 
 Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10 SDK trên Windows.
 
+## Bộ cài Windows 0.6.1
+
+```powershell
+pwsh -File scripts/setup-installer-tools.ps1
+pwsh -File scripts/build.ps1 -Task Installer
+pwsh -File scripts/test-installer.ps1
+```
+
+Phép thử installer dùng một thư mục mới bên trong `.tools`, truyền `/PACKAGETEST=1` cho Setup để tắt ghi registry/shortcut và không dùng đường dẫn cài trước đó. So sánh SHA-256 từng file với payload đã Publish, mở EXE đã cài bằng `--preview`, rồi gọi chính uninstaller của bản thử. Chỉ gỡ thư mục cài riêng; giữ log/ảnh/kết quả JSON để xem lại.
+
+Kiểm tra trước/sau bao gồm registry uninstall, shortcut và thiết lập thật, các tiến trình LanBridge đã mở và file dữ liệu nằm ngoài thư mục cài. Không khởi chạy hook, mạng, clipboard thật hoặc thay bản đang dùng. Phép thử này xác minh chép file, chạy preview và gỡ file; đăng ký Installed apps/shortcut của chế độ cài bình thường cần thử thủ công trên Windows.
+
+Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Đây là thay đổi đóng gói/giấy phép từ 0.6.0; đường nhập và tính năng ứng dụng được giữ nguyên.
+
+## Bộ kiểm tra ứng dụng
+
 | Bộ kiểm tra | Phạm vi |
 | --- | --- |
 | TransportSmoke | TLS thật trên localhost; certificate pin, sai bí mật; một kết nối; Unicode/binary; backpressure; heartbeat; gói quá lớn/JSON lỗi/cắt cụt; timeout xác thực; kết nối lại. Tạm dừng writer, gửi 80.000 mẫu chuột rồi kiểm tra gộp trước mã hóa, giữ ranh giới cuộn/phím/nút/chữ/quyền, snapshot dữ liệu và JSON input gọn tương thích cả giá trị 0/false. Quyền false vẫn được gửi đầy đủ. |

@@ -1,3 +1,10 @@
+# 0.6.1
+
+- Công khai repository và bổ sung giấy phép MIT riêng cho mã nguồn LanBridge, giữ giấy phép/thông báo của các thành phần bên thứ ba.
+- Thêm bộ cài Windows x64 EXE: cài cho tài khoản hiện tại, shortcut Start menu, Desktop tùy chọn và gỡ cài đặt; không cần .NET riêng.
+- Thêm script chuẩn bị compiler có kiểm tra nguồn/chữ ký, tạo installer và checksum cho cả ZIP/EXE; thêm phép thử cài/gỡ trong thư mục cô lập.
+- Giữ các tính năng và đường nhập của 0.6.0; bộ cài yêu cầu đóng phiên cũ khi cập nhật và giữ dữ liệu người dùng khi gỡ.
+
 # 0.6.0
 
 - Thêm biểu tượng LanBridge ở khay hệ thống, nút Ẩn xuống khay và menu mở lại/trả điều khiển/ngắt/thoát. Có tùy chọn nhớ Thu nhỏ xuống khay; mặc định nút − vẫn thu nhỏ vào thanh tác vụ, nút × vẫn kết thúc ứng dụng.

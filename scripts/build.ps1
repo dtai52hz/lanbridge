@@ -1,4 +1,4 @@
-param([ValidateSet('Build', 'Test', 'Publish')][string]$Task = 'Build')
+param([ValidateSet('Build', 'Test', 'Publish', 'Installer')][string]$Task = 'Build')
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path -Parent $PSScriptRoot
 $localDotnet = Join-Path $projectRoot '.tools\dotnet\dotnet.exe'
@@ -14,13 +14,16 @@ try {
         foreach ($testProject in @('TransportSmoke', 'DiscoverySmoke', 'DevicesPageSmoke', 'PreferencesSmoke', 'DesktopSmoke', 'FileSmoke', 'ClipboardFilesSmoke', 'ClipboardSessionSmoke', 'ClipboardImagesSmoke', 'ClipboardImageCodecSmoke', 'ClipboardImageSessionSmoke', 'NativeInputSmoke', 'TextInputSmoke', 'MediaSmoke', 'SessionSmoke')) {
             Invoke-ProjectDotnet run --project "tests\$testProject\$testProject.csproj" -c Release
         }
+    } elseif ($Task -eq 'Installer') {
+        & (Join-Path $PSScriptRoot 'build.ps1') -Task Publish
+        & (Join-Path $PSScriptRoot 'build-installer.ps1')
     } elseif ($Task -eq 'Publish') {
         [xml]$projectXml = Get-Content -LiteralPath src\LanBridge.csproj -Raw
         $releaseVersion = [string]$projectXml.Project.PropertyGroup.Version
         if ($releaseVersion -notmatch '^\d+\.\d+\.\d+$') { throw 'Project Version must be a three-part release number.' }
         $publishDirectory = "release\LanBridge-$releaseVersion-win-x64"
         Invoke-ProjectDotnet publish src\LanBridge.csproj -c Release -r win-x64 --self-contained true '-p:PublishSingleFile=true' '-p:IncludeNativeLibrariesForSelfExtract=true' '-p:DebugType=None' -o $publishDirectory --nologo
-        Copy-Item -LiteralPath README.md,TESTING.md,CHANGELOG.md,NAudio-LICENSE.txt,THIRD-PARTY-NOTICES.md -Destination $publishDirectory
+        Copy-Item -LiteralPath LICENSE,README.md,TESTING.md,CHANGELOG.md,NAudio-LICENSE.txt,THIRD-PARTY-NOTICES.md -Destination $publishDirectory
         if (Test-Path -LiteralPath licenses) { Copy-Item -LiteralPath licenses -Destination $publishDirectory -Recurse -Force }
         if (Test-Path -LiteralPath docs) { Copy-Item -LiteralPath docs -Destination $publishDirectory -Recurse -Force }
         $packagePath = Join-Path $projectRoot "release\LanBridge-$releaseVersion-Windows-x64.zip"
