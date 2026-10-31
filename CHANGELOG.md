@@ -1,3 +1,10 @@
+# 0.7.1
+
+- Giữ mạch ghép Telex/VNI khi Windows không dịch được phím Latin: dùng đường dự phòng cho A–Z, Space và số không Shift thay vì chuyển sang phím gốc rồi reset từ. Giữ nguyên bản dịch hợp lệ, không thay thế dead key, ký tự OEM hoặc tổ hợp Ctrl/Alt/Win.
+- Thêm nút Đặt lại cạnh bộ gõ trên A: trả điều khiển về A, nhả đầu vào đã gửi và đặt lại cả khi chế độ không đổi; giữ phiên, quyền và phím chuyển. Nút bị vô hiệu trên B.
+- Thêm bộ đếm chẩn đoán gõ vào Đo độ trễ: chế độ thực tế, dịch thành công/thất bại/dự phòng, đường phím gốc/tổ hợp và số gói Unicode gửi/nhận. Không ghi nội dung đã gõ; không coi số gói đã lên lịch là bằng chứng ứng dụng đích đã hiện chữ.
+- Thêm hồi quy dịch phím thất bại, ghép dấu, đặt lại bộ gõ và báo cáo với đầu vào giả; không bật hook hoặc SendInput trên desktop đang dùng. Lỗi trên hai máy của người dùng chưa được tái hiện trực tiếp; bản này xử lý đường lỗi đã xác minh và bổ sung cách khôi phục/đối chiếu.
+
 # 0.7.0
 
 - Thêm phím chuyển A ⇄ B tùy chọn trên máy A: gán một phím hoặc tổ hợp, nhấn để chuyển con trỏ tới giữa màn hình B, nhấn lại để về vị trí cũ trên A. Cách chuyển qua mép vẫn dùng được.

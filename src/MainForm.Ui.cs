@@ -10,6 +10,7 @@ public sealed partial class MainForm
     readonly Label _connectionSummary = new();
     readonly DarkButton _switchShortcutButton = new();
     readonly Label _switchShortcutHint = new();
+    readonly DarkButton _resetTypingButton = new();
 
     void BuildUi()
     {
@@ -155,7 +156,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.7.0", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.7.1", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 
@@ -247,7 +248,18 @@ public sealed partial class MainForm
         typingSettings.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         typingSettings.Controls.Add(UiLabel("BỘ GÕ TRÊN MÁY A", 8.5f, Accent, true), 0, 0);
         StyleCombo(_typing); _typing.Items.AddRange(["Gõ: Tiếng Việt Telex", "Gõ: Tiếng Việt VNI", "Gõ: Phím gốc"]);
-        _typing.SelectedIndex = 0; _typing.Margin = Padding.Empty; typingSettings.Controls.Add(_typing, 0, 1);
+        _typing.SelectedIndex = 0; _typing.Margin = new Padding(0, 0, 8, 0);
+        var typingChoice = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = Padding.Empty };
+        typingChoice.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
+        typingChoice.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 86));
+        typingChoice.Controls.Add(_typing, 0, 0);
+        StyleButton(_resetTypingButton, "Đặt lại", 0, 0, 86, 37, Color.FromArgb(39, 51, 69));
+        _resetTypingButton.ForeColor = Color.White; _resetTypingButton.Dock = DockStyle.Fill;
+        _resetTypingButton.Margin = Padding.Empty;
+        _resetTypingButton.AccessibleName = "Đặt lại bộ gõ trên máy A";
+        _resetTypingButton.AccessibleDescription = "Trả điều khiển về A và bắt đầu lại bộ gõ đã chọn. Sau đó chuyển sang B để gõ tiếp.";
+        _resetTypingButton.Click += async (_, _) => await ResetTypingFromUiAsync();
+        typingChoice.Controls.Add(_resetTypingButton, 1, 0); typingSettings.Controls.Add(typingChoice, 0, 1);
         typingSettings.Controls.Add(UiLabel("TỐC ĐỘ CHUỘT TRÊN B (%)", 8.5f, Accent, true), 0, 2);
         _pointerSpeed.Dock = DockStyle.Fill; _pointerSpeed.Margin = new Padding(0, 0, 0, 3);
         _pointerSpeed.BackColor = Card; _pointerSpeed.ForeColor = Color.White; _pointerSpeed.BorderStyle = BorderStyle.FixedSingle;

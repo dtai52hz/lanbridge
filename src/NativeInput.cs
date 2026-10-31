@@ -39,6 +39,14 @@ public sealed class InputRouter : IDisposable
         lock (_outboundLock) pendingOutgoing = _outbound.Count;
         return _diagnostics.Snapshot(_started && _nativeInputEnabled, pendingOutgoing);
     }
+    /// <summary>Lifetime counters only; no typed key, character, word or document content is retained.</summary>
+    public TypingDiagnosticsSnapshot GetTypingDiagnosticsSnapshot() => new(
+        _composer.Mode, _controller, _remote,
+        Interlocked.Read(ref _outgoingTextPackets), Interlocked.Read(ref _outgoingNonAsciiCodeUnits),
+        Interlocked.Read(ref _outgoingBackspaces), Interlocked.Read(ref _printableTranslationSuccesses),
+        Interlocked.Read(ref _printableTranslationFailures), Interlocked.Read(ref _printableFallbacks),
+        Interlocked.Read(ref _physicalModeKeyDowns), Interlocked.Read(ref _shortcutBypassKeyDowns), Interlocked.Read(ref _incomingTextPackets),
+        Interlocked.Read(ref _incomingNonAsciiCodeUnits));
     public bool IsRemote => _remote;
     public bool IsController
     {
@@ -82,6 +90,19 @@ public sealed class InputRouter : IDisposable
         get => _composer.Mode;
         set => OnOwner(() => { if (_composer.Mode != value) { ReleaseHeldInputs(); _textKeys.Clear(); _composer.Mode = value; } });
     }
+    /// <summary>Returns to local control and resets composition even when the selected mode is unchanged.</summary>
+    public Task ResetTypingAsync(TypingMode mode)
+    {
+        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        return OnOwnerAsync(() =>
+        {
+            ReleaseCore(true);
+            _composer.Mode = mode;
+            _composer.Reset();
+            _textKeys.Clear();
+            _textCapsLock = (GetKeyState(0x14) & 1) != 0;
+        }, CancellationToken.None);
+    }
 
     private volatile bool _controller, _allowed, _remote, _blockLocal, _disposed, _started;
     private Action<Packet>? _send;
@@ -108,6 +129,9 @@ public sealed class InputRouter : IDisposable
     private int _mouseSpeedPercent = 100;
     private SwitchShortcut? _switchShortcut;
     private bool _switchEntrySuspended;
+    private long _outgoingTextPackets, _outgoingNonAsciiCodeUnits, _outgoingBackspaces,
+        _printableTranslationSuccesses, _printableTranslationFailures, _printableFallbacks,
+        _physicalModeKeyDowns, _shortcutBypassKeyDowns, _incomingTextPackets, _incomingNonAsciiCodeUnits;
     private System.Windows.Forms.Timer? _timer;
     private Rectangle _bounds;
     private Point _lastLocalPoint, _anchor;
@@ -158,6 +182,8 @@ public sealed class InputRouter : IDisposable
     internal Action<int>? NativeInputRequestedForTesting { get; set; }
     internal Action<Array>? NativeInputBatchForTesting { get; set; }
     internal Action? NativeWorkQueuedForTesting { get; set; }
+    // The override cannot affect a native-enabled router and never installs hooks or injects input.
+    internal Func<int, int, (int Length, string Text)>? PrintableTranslationForTesting { get; set; }
     internal Task InvokeForTestingAsync(Action action) => OnOwnerAsync(action, CancellationToken.None);
     internal async Task<bool> RoutePhysicalKeyForTestingAsync(int key, bool down, int scan = 0, bool extended = false)
     {
@@ -827,7 +853,11 @@ public sealed class InputRouter : IDisposable
 
     private void RouteControllerKey(KeyStroke key, bool down)
     {
-        if (_composer.Mode == TypingMode.Physical) { _composer.Reset(); SendKey(key, down); return; }
+        if (_composer.Mode == TypingMode.Physical)
+        {
+            if (down) Interlocked.Increment(ref _physicalModeKeyDowns);
+            _composer.Reset(); SendKey(key, down); return;
+        }
         if (!down)
         {
             _textKeys.Remove(key.Key);
@@ -843,6 +873,7 @@ public sealed class InputRouter : IDisposable
         }
         if (IsShortcutModifier(key.Key) || HasShortcutModifier() || _sentKeys.ContainsKey(key.Key))
         {
+            Interlocked.Increment(ref _shortcutBypassKeyDowns);
             _textKeys.Remove(key.Key); _composer.Reset(); SendPhysicalShifts(); SendKey(key, true); return;
         }
         if (key.Key == 0x08)
@@ -882,13 +913,42 @@ public sealed class InputRouter : IDisposable
             if (held is >= 0 and < 256 && !_switchConsumedKeys.Contains(held)) _translationState[held] |= 0x80;
         _translationState[0x10] = HasRoutedPhysical(0x10, 0xA0, 0xA1) ? (byte)0x80 : (byte)0;
         _translationState[0x14] = _textCapsLock ? (byte)1 : (byte)0;
-        var layoutThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
-        var output = new StringBuilder(16);
-        // Flag4 prevents mutating the local foreground application's dead-key state.
-        int length = ToUnicodeEx((uint)key.Key, (uint)key.Scan, _translationState, output, output.Capacity, 4, GetKeyboardLayout(layoutThread));
-        if (length <= 0 || length > output.Length) return false;
-        text = output.ToString(0, length);
-        return text.All(c => !char.IsControl(c));
+        int length;
+        string translated;
+        if (!_nativeInputEnabled && PrintableTranslationForTesting is { } translation)
+            (length, translated) = translation(key.Key, key.Scan);
+        else
+        {
+            var layoutThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
+            var output = new StringBuilder(16);
+            // Flag4 prevents mutating the local foreground application's dead-key state.
+            length = ToUnicodeEx((uint)key.Key, (uint)key.Scan, _translationState, output, output.Capacity, 4, GetKeyboardLayout(layoutThread));
+            translated = output.ToString();
+        }
+        if (length > 0 && length <= translated.Length)
+        {
+            text = translated[..length];
+            if (text.All(c => !char.IsControl(c)))
+            {
+                Interlocked.Increment(ref _printableTranslationSuccesses);
+                return true;
+            }
+        }
+        Interlocked.Increment(ref _printableTranslationFailures);
+        text = "";
+        // A foreground IME can return no printable character for a Latin key. Preserve the
+        // built-in Telex/VNI chain instead of turning each failed letter into a raw key and
+        // resetting its word. A negative result is a dead key: never replace that with Latin.
+        // Valid layout translations and layout-dependent OEM/shifted digit keys stay intact.
+        if (length < 0 || _composer.Mode == TypingMode.Physical || HasShortcutModifier()) return false;
+        bool shift = HasRoutedPhysical(0x10, 0xA0, 0xA1);
+        if (key.Key is >= 0x41 and <= 0x5A)
+            text = (shift ^ _textCapsLock ? (char)key.Key : char.ToLowerInvariant((char)key.Key)).ToString();
+        else if (key.Key == 0x20 || (!shift && key.Key is >= 0x30 and <= 0x39))
+            text = ((char)key.Key).ToString();
+        if (text.Length == 0) return false;
+        Interlocked.Increment(ref _printableFallbacks);
+        return true;
     }
 
     private bool HasRemoteControlAlt() =>
@@ -1054,6 +1114,8 @@ public sealed class InputRouter : IDisposable
     private void InjectText(Packet packet)
     {
         var inputs = BuildTextInputs(packet);
+        Interlocked.Increment(ref _incomingTextPackets);
+        Interlocked.Add(ref _incomingNonAsciiCodeUnits, CountNonAscii(packet.Text));
         var modifiers = _receivedKeys.Values.Where(k => IsModifier(k.Key)).ToArray();
         // Unicode and edit Backspaces must not turn into Ctrl/Alt/Shift shortcuts.
         foreach (var modifier in modifiers) InjectKey(modifier, false);
@@ -1291,8 +1353,16 @@ public sealed class InputRouter : IDisposable
         if (packet.Type != "move") FlushPacedMove(true,
             ReferenceEquals(sender, _pacedMoveSender) && (packet.Type is "button" or "wheel") ? packet : null);
         if (sender is null) return;
+        if (packet.Type == "text")
+        {
+            Interlocked.Increment(ref _outgoingTextPackets);
+            Interlocked.Add(ref _outgoingNonAsciiCodeUnits, CountNonAscii(packet.Text));
+            Interlocked.Add(ref _outgoingBackspaces, packet.Dx);
+        }
         QueueOutbound(packet, sender);
     }
+
+    private static int CountNonAscii(string? text) => text?.Count(character => character > 0x7f) ?? 0;
 
     private void QueueControllerMove(Packet packet)
     {
@@ -1526,6 +1596,22 @@ public sealed class InputRouter : IDisposable
     [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr GetModuleHandle(string? moduleName);
 }
+
+/// <summary>Payload-free lifetime typing counters. Queue acceptance does not confirm that a target rendered text.</summary>
+public sealed record TypingDiagnosticsSnapshot(
+    TypingMode EffectiveMode,
+    bool IsController,
+    bool IsRemote,
+    long OutgoingTextPackets,
+    long OutgoingNonAsciiCodeUnits,
+    long OutgoingBackspaces,
+    long PrintableTranslationSuccesses,
+    long PrintableTranslationFailures,
+    long PrintableFallbacks,
+    long PhysicalModeKeyDowns,
+    long ShortcutBypassKeyDowns,
+    long IncomingTextPackets,
+    long IncomingNonAsciiCodeUnits);
 
 /// <summary>Aggregate timings only; contains no packets, keys, text, clipboard data or coordinates.</summary>
 public sealed record InputDiagnosticsSnapshot(

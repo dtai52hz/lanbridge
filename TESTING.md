@@ -2,7 +2,7 @@
 
 Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10 SDK trên Windows.
 
-## Bộ cài Windows 0.7.0
+## Bộ cài Windows 0.7.1
 
 ```powershell
 pwsh -File scripts/setup-installer-tools.ps1
@@ -14,7 +14,7 @@ Phép thử installer dùng một thư mục mới bên trong `.tools`, truyền
 
 Kiểm tra trước/sau bao gồm registry uninstall, shortcut và thiết lập thật, các tiến trình LanBridge đã mở và file dữ liệu nằm ngoài thư mục cài. Không khởi chạy hook, mạng, clipboard thật hoặc thay bản đang dùng. Phép thử này xác minh chép file, chạy preview và gỡ file; đăng ký Installed apps/shortcut của chế độ cài bình thường cần thử thủ công trên Windows.
 
-Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.0.
+Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.1.
 
 ## Bộ kiểm tra ứng dụng
 
@@ -88,9 +88,19 @@ Toàn bộ 15 bộ kiểm tra đạt; DesktopSmoke được chạy lại sau b�
 - SessionSmoke: 443 assertions; phím F9 và Ctrl+Alt+Space chạy qua sender thật, TLS localhost và worker B khi hai form ẩn trong trạng thái khay. Xác minh tọa độ giữa B, không chuyển lặp, không rò phím kích hoạt, nhả đủ phím/modifier trước leave, thu hồi/cấp lại quyền và tạm ngưng để ghi phím mà giữ nguyên phiên/cấu hình. Không cài hook hoặc gọi SendInput thật.
 - Render ẩn ở kích thước mặc định/tối thiểu và hộp gán phím đã được xem trực tiếp. Tùy chọn `LANBRIDGE_UI_PREVIEW_DIR` trỏ tới thư mục con trong `.tools` xuất bốn ảnh và thêm bốn assertions (DevicesPageSmoke 122); kiểm tra thanh cuộn xuất hiện và cuộn tới đủ ô chat ở kích thước tối thiểu. Không Show/kích hoạt cửa sổ; phần native ComboBox/RichTextBox vẫn có hạn chế trong DrawToBitmap.
 
+Hồi quy bộ gõ 0.7.1:
+
+Đã chạy đạt năm bộ kiểm tra liên quan: NativeInputSmoke, TextInputSmoke, DesktopSmoke, DevicesPageSmoke và SessionSmoke. Các bộ khác giữ kết quả của bản trước; không ghi nhận là đã chạy lại cho 0.7.1.
+
+- NativeInputSmoke: 1.813 assertions, gồm lỗi dịch phím có kiểm soát trả rỗng/ký tự điều khiển và lỗi ở hai lần gõ dấu đầu tiên. Telex vẫn tạo `tiếng Việt` và `tiếng tiếng tiếng` bằng một lần bấm dấu cho mỗi từ; VNI, Shift XOR Caps Lock, cú pháp Telex gõ lặp để thoát dấu, kết quả layout hợp lệ, dấu câu, dead key và đường tổ hợp/phím gốc được giữ. Delegate ép lỗi chỉ có hiệu lực trên router native-disabled.
+- DesktopSmoke: 94 assertions; Đặt lại cùng chế độ vẫn xóa trạng thái ghép từ, chọn lại đúng chế độ UI nếu router lệch, giữ quyền/role/phím chuyển/thiết lập; nút bị khóa trên B. Report chỉ có cấu hình và số đếm, không lấy payload từ chat/log. Nút và ô chọn bộ gõ không chồng nhau, chữ vừa ở kích thước cửa sổ tối thiểu.
+- DevicesPageSmoke: 118 assertions cơ sở và thêm bốn kiểm tra khi bật render ẩn (122); đã xem ảnh phiên mặc định/tối thiểu, cuộn tới chat và hộp gán phím trong `.tools/preview-0.7.1`. Không Show hoặc kích hoạt cửa sổ thật; phần native của ComboBox/RichTextBox vẫn có hạn chế khi DrawToBitmap.
+- TextInputSmoke: 2.419 assertions cho ghép Telex/VNI và JSON edits. SessionSmoke: 503 assertions; truyền lỗi dịch phím giả ở hai lần gõ dấu đầu qua TLS localhost, B nhận đúng cả dấu câu/Unicode, reset UI nhả Ctrl trước leave trên cùng phiên, F9 vào lại và `as` tạo `á`. Bộ đếm và báo cáo không chứa chuỗi thử.
+- Chưa tái hiện trực tiếp lỗi mất dấu của người dùng trên hai máy thật. Phép thử ép lỗi xác minh đường dự phòng và khôi phục; số gói/UTF-16 trong báo cáo không chứng minh ứng dụng B đã hiển thị được chữ.
+
 ## Thử trên hai máy thật
 
-1. Mở bản 0.7.0 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
+1. Mở bản 0.7.1 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
 2. Chọn đúng vị trí B; thử chuyển ngay sang B, trở lại A, sang B tiếp mà không đợi và hotkey Ctrl+Alt+F12. Thử trái/phải, cuộn, middle/X buttons và gõ trong Notepad trên B. Trên A chọn Telex gõ `tieengs Vieetj`, VNI gõ `tie6ng1 Vie6t5`; cả hai cần ra `tiếng Việt`. Thử Backspace, chữ hoa, Ctrl+C/V/Z, Shift+mũi tên, Shift+click và chuyển sang Phím gốc. Tắt bộ gõ ngoài nếu can thiệp; không cần UniKey B cho chế độ tích hợp.
 3. Trong lúc giữ Shift hoặc nút chuột trên B, rút mạng hoặc ngắt kết nối. Kiểm tra A lấy lại chuột và B không còn phím/nút bị giữ.
 4. Trên B tắt quyền Chuột/phím khi A đang điều khiển. Xác minh A nhận lại chuột và không tiếp tục thao tác được B cho tới khi B bật quyền lại.
@@ -107,5 +117,6 @@ Toàn bộ 15 bộ kiểm tra đạt; DesktopSmoke được chạy lại sau b�
 15. Chọn vị trí B bằng sơ đồ và danh sách, đổi tốc độ 50/100/200% khi đang rê/kéo/cuộn, đổi bộ gõ rồi đóng/mở lại. Các lựa chọn phải được nhớ; ghép nối và quyền vẫn đi theo phiên. Bật/tắt Thu nhỏ xuống khay, thử nút −, nút Ẩn xuống khay, bấm đúp/chuột phải biểu tượng, mở lại EXE khi đang ẩn và lệnh Thoát. Khi B đang ẩn, A yêu cầu kết nối: cửa sổ B phải hiện lại để người dùng Đồng ý/Từ chối; thử cả timeout. Nút × vẫn thoát dù tùy chọn khay đã bật.
 16. Trên A mở **Phiên điều khiển → Gán phím chuyển A ⇄ B… → Bấm để gán phím**, nhấn F9 rồi **Lưu**. Đặt con trỏ giữa A, nhấn F9: phải sang giữa B; nhấn lại phải về vị trí trước đó trên A. Giữ F9 không được chuyển lặp. Thử Ctrl+Alt+Space, Ctrl/Alt trái/phải, phím đơn, Esc/Tab/Enter, đang Telex và đang giữ nút chuột. Kiểm tra không kẹt modifier hoặc gõ phím chuyển vào B. Thử Hủy và Bỏ gán/Lưu, đóng/mở lại, chạy ở khay và chọn lại vai trò. Ctrl+Alt+F12 vẫn phải thoát khẩn cấp; B thu hồi quyền thì phím chuyển không được tiếp tục điều khiển.
 17. Thử A 0.7.0 với B 0.6.1: discovery, B Đồng ý, gán và bấm phím chuyển hai chiều, chuyển mép, thu hồi quyền và ngắt phiên. Đây là thay đổi xử lý ở A, không thêm loại gói giao thức; cập nhật B không phải điều kiện để dùng phím chuyển.
+18. Trên A 0.7.1 chọn Telex, gõ `tieengs Vieetj . , ? !` trong Notepad B, dùng một lần phím dấu cho mỗi từ. Thử VNI, Phím gốc, Shift/Caps Lock, chuyển bằng mép/F9 và lặp gõ nhanh. Nhấn Đặt lại: A phải lấy lại điều khiển và từ mới không bị ảnh hưởng từ trước đó; TLS và quyền giữ nguyên. Nếu còn mất dấu, chép báo cáo trên A/B ngay sau khi gõ, đối chiếu mode UI/thực tế, dịch lỗi/dự phòng và gói Unicode gửi/nhận; thử cả A 0.7.1 với B 0.7.0. Các bước này chưa đánh dấu đạt cho máy thật.
 
 Các bước trên là kế hoạch xác minh thủ công; chưa được đánh dấu đạt cho hai máy thật.

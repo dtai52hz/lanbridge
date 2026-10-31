@@ -27,7 +27,7 @@ public sealed partial class MainForm
         layout.RowStyles.Add(new RowStyle(SizeType.Absolute, 44));
         window.Controls.Add(layout);
         layout.Controls.Add(UiLabel("Tìm khâu gây khựng", 19, Color.White, true), 0, 0);
-        var explanation = UiLabel("Mở bảng này trên cả A và B, rồi thử rê/click/gõ trong 15–20 giây.\nSố đo chỉ chứa thời gian và số lượng; không ghi nội dung phím, clipboard hoặc tọa độ.", 9, Muted);
+        var explanation = UiLabel("Mở bảng này trên A và B để kiểm tra độ trễ và đường đi của bộ gõ.\nChỉ ghi thời gian, chế độ và số lượng; không ghi nội dung đã gõ, clipboard hoặc tọa độ.", 9, Muted);
         explanation.AutoEllipsis = false; layout.Controls.Add(explanation, 0, 1);
         var report = new TextBox
         {
@@ -62,11 +62,13 @@ public sealed partial class MainForm
     string BuildLatencyReport()
     {
         var input = _input.GetDiagnosticsSnapshot();
+        var typing = _input.GetTypingDiagnosticsSnapshot();
         var text = new StringBuilder();
-        text.AppendLine($"LanBridge {Application.ProductVersion} · {(_sessionIsHost ? "Máy B" : "Máy A")}");
+        bool host = _peer == null ? IsHost : _sessionIsHost;
+        text.AppendLine($"LanBridge {Application.ProductVersion} · {(host ? "Máy B" : "Máy A")}");
         text.AppendLine(_peer == null ? "Chưa có phiên kết nối." : "Phiên TLS đang kết nối.");
         AppendRoundtrip(text, "Phản hồi mạng/TLS", _peer?.Latency);
-        if (!_sessionIsHost) AppendRoundtrip(text, "Đường nhập A → B → A", _inputLatency?.Latency);
+        if (!host) AppendRoundtrip(text, "Đường nhập A → B → A", _inputLatency?.Latency);
         else text.AppendLine("Đường nhập A → B → A: xem số đo trên A.");
         if (_peer != null && !_inputDiagnosticsCapable) text.AppendLine("Máy bên kia chưa hỗ trợ đo đường nhập; cập nhật cả hai máy.");
         text.AppendLine();
@@ -83,6 +85,20 @@ public sealed partial class MainForm
         if (input.NativeInjectionInProgress) text.AppendLine($"Đang chờ Windows nhận đầu vào: {Ms(input.NativeInjectionInProgressMilliseconds)} ms.");
         if (input.HookCallbackInProgress) text.AppendLine($"Callback hook đang chạy: {Ms(input.HookCallbackInProgressMilliseconds)} ms.");
         text.AppendLine();
+        text.AppendLine("BỘ GÕ · CHỈ THỐNG KÊ SỐ LƯỢNG");
+        text.AppendLine($"Vai trò giao diện: {(IsHost ? "B · nhận" : "A · điều khiển")}; luồng nhập: {(typing.IsController ? "A · điều khiển" : "B · nhận")}; điều khiển trên B: {(typing.IsRemote ? "đang bật" : "đang tắt")}.");
+        if (typing.IsController)
+        {
+            text.AppendLine($"Bộ gõ đã chọn: {TypingModeName((TypingMode)_typing.SelectedIndex)}; đang xử lý: {TypingModeName(typing.EffectiveMode)}.");
+            text.AppendLine($"Phím chuyển đang dùng trên A: {_input.SwitchShortcut?.DisplayName ?? "chưa gán / đang tạm dừng"}.");
+            text.AppendLine($"Dịch phím trên A: thành công {typing.PrintableTranslationSuccesses}; thất bại {typing.PrintableTranslationFailures}; dùng đường dự phòng {typing.PrintableFallbacks}.");
+            text.AppendLine($"Phím xuống đi đường gốc: chế độ Phím gốc {typing.PhysicalModeKeyDowns}; tổ hợp Ctrl/Alt/Win {typing.ShortcutBypassKeyDowns}.");
+            text.AppendLine($"Chữ đưa vào hàng gửi từ A: {typing.OutgoingTextPackets} gói; ngoài ASCII {typing.OutgoingNonAsciiCodeUnits}; xóa lùi để ghép dấu {typing.OutgoingBackspaces}.");
+        }
+        else text.AppendLine("B nhận chữ Unicode đã ghép từ A; chế độ Telex/VNI phải chọn trên A.");
+        text.AppendLine($"Gói chữ hợp lệ qua luồng nhập trên máy này: {typing.IncomingTextPackets}; ngoài ASCII {typing.IncomingNonAsciiCodeUnits}.");
+        text.AppendLine("Bộ đếm chữ tính từ lúc mở ứng dụng; ngoài ASCII đếm đơn vị UTF-16, không chứa nội dung. Gói được lên lịch chưa xác nhận ứng dụng đích đã hiện chữ.");
+        text.AppendLine();
         text.AppendLine("Mạng/TLS gồm hàng đợi và phản hồi của LanBridge, không phải ping ICMP.");
         text.AppendLine("Đường nhập gồm lượt đi/về và qua luồng nhập B; chưa đo ứng dụng B vẽ xong.");
         text.AppendLine("Thời gian gọi SendInput chỉ đo enqueue; Windows vẫn có thể xử lý tiếp sau đó.");
@@ -90,6 +106,14 @@ public sealed partial class MainForm
         text.AppendLine("(*) Đồng hồ sự kiện Windows có bước thô; không dùng số nhỏ để kết luận.");
         return text.ToString();
     }
+
+    static string TypingModeName(TypingMode mode) => mode switch
+    {
+        TypingMode.VietnameseTelex => "Tiếng Việt Telex",
+        TypingMode.VietnameseVni => "Tiếng Việt VNI",
+        TypingMode.Physical => "Phím gốc",
+        _ => "chưa xác định",
+    };
 
     static string Ms(double value) => value.ToString("0.0", CultureInfo.InvariantCulture);
     static void AppendRoundtrip(StringBuilder text, string name, ConnectionLatency? value)

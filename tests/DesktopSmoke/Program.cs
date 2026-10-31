@@ -45,6 +45,7 @@ internal static class Program
             await CheckRestoredPreferencesAsync(Path.Combine(root, "restore", "preferences.json"));
             await CheckLatestPreferencesAsync(Path.Combine(root, "latest", "preferences.json"));
             await CheckSwitchShortcutPreferencesAsync(Path.Combine(root, "shortcut", "preferences.json"));
+            await CheckTypingRecoveryAsync(Path.Combine(root, "typing-recovery", "preferences.json"));
             CheckTrayLifecycle();
             CheckCloseCleanup();
         }
@@ -238,6 +239,103 @@ internal static class Program
         finally { final.Close(); }
     }
 
+    private static async Task CheckTypingRecoveryAsync(string path)
+    {
+        var expected = new UserPreferences
+        {
+            TypingMode = TypingMode.VietnameseTelex, Edge = ScreenEdge.Bottom,
+            MouseSpeedPercent = 135, MinimizeToTray = true,
+            SwitchShortcut = new SwitchShortcut(0x78),
+        };
+        Check(new UserPreferencesStore(path).TrySave(expected), "Could not prepare isolated typing recovery preferences.");
+        using var form = CreateForm(path);
+        try
+        {
+            var input = Get<InputRouter>(form, "_input");
+            var composer = Get<VietnameseComposer>(input, "_composer");
+            var reset = Get<Button>(form, "_resetTypingButton");
+            var typing = Get<ComboBox>(form, "_typing");
+            var roles = Get<ComboBox>(form, "_role");
+            var priorPermissions = Get<Permissions>(form, "_permissions") with { };
+            Check(reset.Enabled && typing.SelectedIndex == (int)TypingMode.VietnameseTelex
+                && input.TypingMode == TypingMode.VietnameseTelex,
+                "The controller's selected Telex mode must expose typing recovery without a connection.");
+            LayoutHiddenControls(form);
+            Get<TabControl>(form, "_tabs").SelectedTab = Get<TabPage>(form, "_sessionTab");
+            form.Size = form.MinimumSize;
+            LayoutHiddenControls(form);
+            Check(ReferenceEquals(typing.Parent, reset.Parent) && !typing.Bounds.IntersectsWith(reset.Bounds)
+                && reset.Parent!.ClientRectangle.Contains(reset.Bounds)
+                && typing.Parent!.ClientRectangle.Contains(typing.Bounds),
+                "The typing chooser and recovery button must remain distinct and fully reachable at minimum window size.");
+            Check(typing.Width >= TextRenderer.MeasureText(typing.Text, typing.Font).Width + SystemInformation.VerticalScrollBarWidth
+                && reset.Width >= TextRenderer.MeasureText(reset.Text, reset.Font).Width + 12,
+                "The minimum window must leave room to read the chosen typing mode and recovery action.");
+            composer.Process('a'); composer.Process('a');
+            Get<HashSet<int>>(input, "_textKeys").Add(0x41);
+            Check(composer.CurrentWord == "â", "The same-mode recovery check did not prepare an unfinished Telex word.");
+
+            await (Task)Call(form, "ResetTypingFromUiAsync")!;
+            Check(composer.CurrentWord.Length == 0 && Get<HashSet<int>>(input, "_textKeys").Count == 0,
+                "Resetting an already selected Telex mode must still clear its unfinished word and text-key bookkeeping.");
+            Check(input.TypingMode == TypingMode.VietnameseTelex && typing.SelectedIndex == (int)TypingMode.VietnameseTelex,
+                "Typing recovery changed the selected mode instead of reapplying it.");
+            Check(reset.Enabled && !Get<bool>(form, "_resettingTyping"),
+                "Typing recovery must restore its button and clear its busy state.");
+            Check(input.SwitchShortcut == expected.SwitchShortcut
+                && Get<SwitchShortcut?>(form, "_configuredSwitchShortcut") == expected.SwitchShortcut,
+                "Typing recovery must preserve the controller's configured switch shortcut.");
+            Check(input.IsController && !input.CanControl && roles.SelectedIndex == 0
+                && Get<Permissions>(form, "_permissions") == priorPermissions,
+                "Typing recovery must not change roles, grant input permission or alter feature permissions.");
+            Check((UserPreferences)Call(form, "CapturePreferences")! == expected,
+                "Typing recovery changed convenience preferences unrelated to the unfinished word.");
+            await (Task)Call(form, "FlushPreferencesAsync")!;
+            Check(new UserPreferencesStore(path).Load() == expected,
+                "Typing recovery must not rewrite the saved mode, shortcut, position or pointer preferences.");
+
+            // A selected mode can be reapplied even if the router has drifted to physical input.
+            input.TypingMode = TypingMode.Physical;
+            Check(typing.SelectedIndex == (int)TypingMode.VietnameseTelex && input.TypingMode == TypingMode.Physical,
+                "The recovery check did not prepare a selected/effective mode mismatch.");
+            await (Task)Call(form, "ResetTypingFromUiAsync")!;
+            Check(input.TypingMode == TypingMode.VietnameseTelex && composer.CurrentWord.Length == 0,
+                "Typing recovery must reapply the UI's chosen mode to the router.");
+
+            const string sensitive = "never-retain-typed-content-Đặng-Ấ";
+            Get<TextBox>(form, "_chat").Text = sensitive;
+            Get<RichTextBox>(form, "_log").AppendText(sensitive);
+            string report = (string)Call(form, "BuildLatencyReport")!;
+            Check(report.Contains("BỘ GÕ", StringComparison.Ordinal)
+                && report.Contains("đang xử lý: Tiếng Việt Telex", StringComparison.Ordinal)
+                && report.Contains("Phím chuyển đang dùng trên A: F9", StringComparison.Ordinal),
+                "The typing report must identify the effective mode and active controller binding.");
+            Check(!report.Contains(sensitive, StringComparison.Ordinal),
+                "A typing diagnostic report must not include chat, log or typed payloads.");
+            AssertInert(form);
+
+            roles.SelectedIndex = 1;
+            var checks = Get<Dictionary<string, CheckBox>>(form, "_checks");
+            checks["Input"].Checked = false;
+            var receiverPermissions = Get<Permissions>(form, "_permissions") with { };
+            composer.Process('a'); composer.Process('a');
+            var wordOnReceiver = composer.CurrentWord;
+            Check(!reset.Enabled && wordOnReceiver == "â", "Receiver mode must disable the local typing recovery action.");
+            await (Task)Call(form, "ResetTypingFromUiAsync")!;
+            Check(composer.CurrentWord == wordOnReceiver && !input.IsController && roles.SelectedIndex == 1
+                && !input.CanControl && Get<Permissions>(form, "_permissions") == receiverPermissions,
+                "Invoking the guarded recovery action on B must not reset state, switch roles or regrant permission.");
+            Check(!reset.Enabled && input.SwitchShortcut == expected.SwitchShortcut,
+                "Receiver recovery guard must retain the disabled button and saved controller binding.");
+            report = (string)Call(form, "BuildLatencyReport")!;
+            Check(report.Split('\n')[0].Contains("Máy B", StringComparison.Ordinal)
+                && report.Contains("chế độ Telex/VNI phải chọn trên A", StringComparison.Ordinal),
+                "A disconnected receiver report must identify B and explain where its typing mode is applied.");
+            AssertInert(form);
+        }
+        finally { form.Close(); }
+    }
+
     private static async Task CheckLatestPreferencesAsync(string path)
     {
         using var form = CreateForm(path);
@@ -323,6 +421,13 @@ internal static class Program
         var form = new MainForm(preview: true, clipboard: new MemoryClipboard(), preferencesPath: path);
         _ = form.Handle;
         return form;
+    }
+
+    private static void LayoutHiddenControls(Control parent)
+    {
+        _ = parent.Handle;
+        parent.PerformLayout();
+        foreach (Control child in parent.Controls) LayoutHiddenControls(child);
     }
 
     private static void AssertInert(MainForm form)
