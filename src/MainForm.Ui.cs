@@ -8,6 +8,8 @@ public sealed partial class MainForm
     readonly NumericUpDown _pointerSpeed = new() { Minimum = 50, Maximum = 200, Increment = 10, Value = 100 };
     readonly CheckBox _minimizeToTray = new();
     readonly Label _connectionSummary = new();
+    readonly DarkButton _switchShortcutButton = new();
+    readonly Label _switchShortcutHint = new();
 
     void BuildUi()
     {
@@ -37,7 +39,7 @@ public sealed partial class MainForm
         title.RowStyles.Add(new RowStyle(SizeType.Absolute, 42));
         title.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         title.Controls.Add(UiLabel("Một bộ chuột phím. Hai máy tính.", 22, Color.White, true), 0, 0);
-        title.Controls.Add(UiLabel("Chạm mép màn hình để tiếp tục công việc trên máy bên cạnh.", 9.5f, Muted), 0, 1);
+        title.Controls.Add(UiLabel("Chạm mép màn hình hoặc dùng phím chuyển để tiếp tục trên máy bên cạnh.", 9.5f, Muted), 0, 1);
         workspace.Controls.Add(title, 0, 0);
 
         _tabs.Dock = DockStyle.Fill; _tabs.Margin = Padding.Empty; _tabs.TabStop = false;
@@ -153,7 +155,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.6.1", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.7.0", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 
@@ -219,11 +221,12 @@ public sealed partial class MainForm
     {
         var main = new TableLayoutPanel
         {
-            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 5,
-            Padding = new Padding(22, 17, 22, 22), Margin = Padding.Empty, AutoScroll = true
+            Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
+            Padding = new Padding(22, 17, 22, 22), Margin = Padding.Empty, AutoScroll = true,
+            AutoScrollMinSize = new Size(0, 657)
         };
         main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var height in new[] { 142, 182, 70, 60 }) main.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        foreach (var height in new[] { 142, 48, 182, 70, 60 }) main.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); _sessionTab.Controls.Add(main);
         var inputSettings = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 0, 0, 9) };
         inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 53)); inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
@@ -257,6 +260,22 @@ public sealed partial class MainForm
         inputSettings.Controls.Add(typingSettings, 1, 0);
         main.Controls.Add(inputSettings, 0, 0);
 
+        var shortcutSettings = new TableLayoutPanel
+        {
+            Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 0, 0, 10),
+        };
+        shortcutSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 53));
+        shortcutSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
+        StyleButton(_switchShortcutButton, "Gán phím chuyển A ⇄ B…", 0, 0, 280, 38, Color.FromArgb(39, 51, 69));
+        _switchShortcutButton.ForeColor = Color.White; _switchShortcutButton.Dock = DockStyle.Fill;
+        _switchShortcutButton.Margin = new Padding(0, 0, 15, 0); _switchShortcutButton.AccessibleName = "Gán phím chuyển máy A và B";
+        _switchShortcutButton.Click += (_, _) => ConfigureSwitchShortcut();
+        shortcutSettings.Controls.Add(_switchShortcutButton, 0, 0);
+        ConfigureUiLabel(_switchShortcutHint, 8.5f, Muted); _switchShortcutHint.AutoEllipsis = false;
+        _switchShortcutHint.Text = "Bấm phím đã gán trên A để qua B,\nrồi bấm lại để về A.";
+        _switchShortcutHint.TextAlign = ContentAlignment.MiddleLeft; shortcutSettings.Controls.Add(_switchShortcutHint, 1, 0);
+        main.Controls.Add(shortcutSettings, 0, 1);
+
         var permissionCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(13, 13, 13, 10), Margin = new Padding(0, 0, 0, 13) };
         var permissionContent = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = Card, Margin = Padding.Empty };
         permissionContent.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
@@ -273,7 +292,7 @@ public sealed partial class MainForm
         AddPermission("BlockInput", "⊘  Khóa phím B"); AddPermission("Privacy", "◐  Màn che B");
         var permissionHint = UiLabel("Chỉ máy nhận điều khiển được thay đổi các quyền này.", 8, Muted);
         permissionHint.Margin = new Padding(4, 2, 0, 0); permissionContent.Controls.Add(permissionHint, 0, 2);
-        BindGridWidths(_permissionsPanel, 4); main.Controls.Add(permissionCard, 0, 1);
+        BindGridWidths(_permissionsPanel, 4); main.Controls.Add(permissionCard, 0, 2);
 
         var actionCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(9, 10, 9, 9), Margin = new Padding(0, 0, 0, 12) };
         _actions.Dock = DockStyle.Fill; _actions.WrapContents = false; _actions.Margin = Padding.Empty;
@@ -281,7 +300,7 @@ public sealed partial class MainForm
         AddAction("Gửi file", async () => await SendFile()); AddAction("Nghe B", () => RequestFeature("audio"));
         AddAction("Ghi hình", () => RequestFeature("recording")); AddAction("Khóa B", () => RequestFeature("block"));
         AddAction("Màn che", () => RequestFeature("privacy")); AddAction("Restart B", RestartRemote);
-        BindGridWidths(_actions, 6); main.Controls.Add(actionCard, 0, 2);
+        BindGridWidths(_actions, 6); main.Controls.Add(actionCard, 0, 3);
         var liveStatus = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 3, Margin = Padding.Empty };
         liveStatus.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100)); liveStatus.ColumnStyles.Add(new ColumnStyle(SizeType.Absolute, 133));
         liveStatus.RowStyles.Add(new RowStyle(SizeType.Absolute, 20)); liveStatus.RowStyles.Add(new RowStyle(SizeType.Absolute, 18));
@@ -300,7 +319,7 @@ public sealed partial class MainForm
         var diagnostics = new DarkButton(); StyleButton(diagnostics, "Đo độ trễ", 0, 0, 133, 30, Accent);
         diagnostics.Dock = DockStyle.Fill; diagnostics.Margin = new Padding(0, 0, 0, 1);
         diagnostics.Click += (_, _) => ShowLatencyDiagnostics(); liveStatus.Controls.Add(diagnostics, 1, 2);
-        main.Controls.Add(liveStatus, 0, 3);
+        main.Controls.Add(liveStatus, 0, 4);
 
         var logCard = new UiCard { Dock = DockStyle.Fill, BackColor = Card, Padding = new Padding(14), Margin = Padding.Empty, MinimumSize = new Size(0, 116) };
         var logContent = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 3, BackColor = Card, Margin = Padding.Empty };
@@ -318,7 +337,7 @@ public sealed partial class MainForm
         var sendChat = new DarkButton(); StyleButton(sendChat, "Gửi", 0, 0, 75, 38, Accent); sendChat.Dock = DockStyle.Fill;
         sendChat.Margin = Padding.Empty; chatRow.Controls.Add(sendChat, 1, 0);
         sendChat.Click += (_, _) => SendChat(); _chat.KeyDown += (_, e) => { if (e.KeyCode == Keys.Enter) { SendChat(); e.SuppressKeyPress = true; } };
-        logContent.Controls.Add(chatRow, 0, 2); main.Controls.Add(logCard, 0, 4);
+        logContent.Controls.Add(chatRow, 0, 2); main.Controls.Add(logCard, 0, 5);
     }
 
     static Label UiLabel(string text, float size, Color color, bool bold = false)

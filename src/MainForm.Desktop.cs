@@ -42,6 +42,7 @@ public sealed partial class MainForm
             _pointerSpeed.Value = preferences.MouseSpeedPercent;
             _input.MouseSpeedPercent = preferences.MouseSpeedPercent;
             _minimizeToTray.Checked = preferences.MinimizeToTray;
+            ApplySwitchShortcut(preferences.SwitchShortcut);
             ApplyPermissions();
         }
         finally { _restoringPreferences = false; }
@@ -61,7 +62,8 @@ public sealed partial class MainForm
         Edge = (ScreenEdge)Math.Max(0, _edge.SelectedIndex),
         TypingMode = (TypingMode)Math.Max(0, _typing.SelectedIndex),
         MouseSpeedPercent = (int)_pointerSpeed.Value,
-        MinimizeToTray = _minimizeToTray.Checked
+        MinimizeToTray = _minimizeToTray.Checked,
+        SwitchShortcut = _configuredSwitchShortcut
     };
 
     void QueuePreferenceSave()

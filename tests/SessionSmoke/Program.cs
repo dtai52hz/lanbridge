@@ -79,6 +79,7 @@ internal static partial class Program
 
                 await CheckMinimizedSessionAsync(a, b, first, aInput, bInput);
                 await CheckDesktopSessionAsync(a, b, first, aInput, bInput);
+                await CheckSwitchShortcutSessionAsync(a, b, first, aInput, bInput);
                 await CheckMoveAndScrollLatencyAsync(a, b, first, aInput, bInput);
                 await CheckInputAcknowledgementAsync(a, b, first, aInput, bInput);
                 await CheckInteractiveTrafficAsync(a, b, first, aInput, bInput);

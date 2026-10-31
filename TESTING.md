@@ -2,7 +2,7 @@
 
 Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10 SDK trên Windows.
 
-## Bộ cài Windows 0.6.1
+## Bộ cài Windows 0.7.0
 
 ```powershell
 pwsh -File scripts/setup-installer-tools.ps1
@@ -14,7 +14,7 @@ Phép thử installer dùng một thư mục mới bên trong `.tools`, truyền
 
 Kiểm tra trước/sau bao gồm registry uninstall, shortcut và thiết lập thật, các tiến trình LanBridge đã mở và file dữ liệu nằm ngoài thư mục cài. Không khởi chạy hook, mạng, clipboard thật hoặc thay bản đang dùng. Phép thử này xác minh chép file, chạy preview và gỡ file; đăng ký Installed apps/shortcut của chế độ cài bình thường cần thử thủ công trên Windows.
 
-Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Đây là thay đổi đóng gói/giấy phép từ 0.6.0; đường nhập và tính năng ứng dụng được giữ nguyên.
+Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.0.
 
 ## Bộ kiểm tra ứng dụng
 
@@ -22,9 +22,9 @@ Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương t
 | --- | --- |
 | TransportSmoke | TLS thật trên localhost; certificate pin, sai bí mật; một kết nối; Unicode/binary; backpressure; heartbeat; gói quá lớn/JSON lỗi/cắt cụt; timeout xác thực; kết nối lại. Tạm dừng writer, gửi 80.000 mẫu chuột rồi kiểm tra gộp trước mã hóa, giữ ranh giới cuộn/phím/nút/chữ/quyền, snapshot dữ liệu và JSON input gọn tương thích cả giá trị 0/false. Quyền false vẫn được gửi đầy đủ. |
 | DiscoverySmoke | UDP loopback thật: query, trả lời, cập nhật trạng thái, hết hạn, giới hạn/gói lỗi, địa chỉ lấy từ nguồn gửi và không phát bí mật. TLS xác nhận: pin, đồng ý, từ chối, đang bận, hủy từ máy A, dữ liệu trước chấp nhận và hết hạn 30 giây đều dọn trạng thái. Không phát broadcast ra LAN trong kiểm tra. |
-| DevicesPageSmoke | Form ẩn: danh sách thiết bị, trạng thái bận/kết nối/làm mới, metadata IP/pin mới, không thay thẻ khi chỉ heartbeat. Giao diện chính mặc định ở Thiết bị; preview không mở mạng/hook; mặc định hộp xác nhận từ chối; quyền máy khác không ghi đè quyền cục bộ. |
-| PreferencesSmoke | File JSON trong thư mục tạm: mọi vị trí/bộ gõ, tốc độ 50–200%, tùy chọn khay, giới hạn kích thước/độ sâu/schema, dữ liệu hỏng từng trường và khóa file. Ghi nguyên file, giữ bản cũ nếu không ghi được, xóa temp và chỉ lưu trường tiện dùng. |
-| DesktopSmoke | MainForm ẩn: preview tách khỏi thiết lập thật/khay thật; khôi phục lựa chọn vào UI và input router, 80 lần ghi chồng nhau giữ bản cuối, thu nhỏ tùy chọn/ẩn/mở lại/chuẩn bị hộp xác nhận và đóng sạch. |
+| DevicesPageSmoke | Form ẩn: danh sách thiết bị, trạng thái bận/kết nối/làm mới, metadata IP/pin mới, không thay thẻ khi chỉ heartbeat. Giao diện chính mặc định ở Thiết bị; preview không mở mạng/hook; mặc định hộp xác nhận từ chối; quyền máy khác không ghi đè quyền cục bộ. Hộp ghi phím nhận phím đơn/tổ hợp, Esc/Tab/Enter, bỏ gán, từ chối tổ hợp dành riêng và giữ key-up/auto-repeat để không tự kích hoạt nút. |
+| PreferencesSmoke | File JSON trong thư mục tạm: mọi vị trí/bộ gõ, tốc độ 50–200%, tùy chọn khay và phím chuyển; giới hạn kích thước/độ sâu/schema, dữ liệu hỏng từng trường và khóa file. Phím chuyển hợp lệ roundtrip, file cũ mặc định chưa gán, shortcut hỏng chỉ reset trường đó. Ghi nguyên file, giữ bản cũ nếu không ghi được, xóa temp và chỉ lưu trường tiện dùng. |
+| DesktopSmoke | MainForm ẩn: preview tách khỏi thiết lập thật/khay thật; khôi phục lựa chọn vào UI và input router, 80 lần ghi chồng nhau giữ bản cuối, thu nhỏ tùy chọn/ẩn/mở lại/chuẩn bị hộp xác nhận và đóng sạch. Gán/lưu/mở lại/bỏ gán phím chuyển, từ chối phím sai và lưu thiết lập trong lúc router tạm ngưng phím để ghi lựa chọn mới. |
 | FileSmoke | Tên tiếng Việt; file nhị phân, file rỗng; xác minh hash và biên byte; không ghi đè; chặn đường dẫn/tên thiết bị; từ chối khi không có quyền; xóa file dang dở. |
 | ClipboardFilesSmoke | Nhiều file/thư mục tiếng Việt, thư mục trống, giữ tên và SHA-256, hai chiều, không echo, lỗi hash, hủy và thay lô, đường dẫn vượt phạm vi, giới hạn, junction thật và giữ cache đã hoàn tất. Điều tiết từng khối: không gửi tiếp trước xác nhận đúng ID/offset của khối đã ghi, hủy khi đang chờ ACK. Không đọc/ghi clipboard hệ điều hành. |
 | ClipboardSessionSmoke | Hai form ẩn, TLS thật, clipboard giả riêng: text/file hai chiều, thỏa thuận phiên bản, hai quyền, chat trong lúc truyền 24 MB, clipboard bận và thử lại, không ghi đè lần sao chép mới, hủy file .partial khi ngắt, callback phiên cũ bị bỏ qua. |
@@ -77,9 +77,20 @@ Hồi quy tiện dùng 0.6.0:
 
 Toàn bộ 15 bộ kiểm tra đạt cho 0.6.0: DevicesPageSmoke 81, PreferencesSmoke 305, DesktopSmoke 30, NativeInputSmoke 1.636 và SessionSmoke 398 assertions. Hồi quy native giả chậm 35 ms vẫn giữ kết nối và luồng hook rảnh; lần chạy tổng ghi nhận 20 native jobs, vị trí cuối 60,2 ms. Đã xuất và xem bố cục phiên ở 1120×860 và 1060×780; DrawToBitmap có hạn chế với phần native của ComboBox/RichTextBox, nên hiển thị thực trên desktop vẫn cần kiểm tra thủ công.
 
+Hồi quy phím chuyển 0.7.0:
+
+Toàn bộ 15 bộ kiểm tra đạt; DesktopSmoke được chạy lại sau bản sửa cuối của hộp gán phím.
+
+- NativeInputSmoke: 1.773 assertions; phím đơn/tổ hợp chuyển từ con trỏ bất kỳ sang giữa B rồi về vị trí A trước đó; chống auto-repeat, giữ đủ thứ tự nhả phím và modifier, không gửi phím chuyển vào ứng dụng B. Kiểm tra quyền/vai trò, mất phiên, phím thoát Ctrl+Alt+F12, chặn chuyển qua mép trong lúc ghi phím và khôi phục khi hủy/bỏ gán, cùng các hồi quy chuyển mép và bộ gõ cũ. Lời gọi native được thay bằng observer; không cài hook hoặc gọi SendInput thật.
+- PreferencesSmoke: 487 assertions, trong đó phím đơn/tổ hợp được lưu bằng key/modifiers có kiểm tra; phím không hợp lệ hoặc JSON hỏng không làm mất các lựa chọn khác. File schema 1 trước 0.7.0 vẫn đọc được và mặc định không gán phím.
+- DesktopSmoke: 70 assertions với form ẩn, kiểm tra F8/Ctrl+Alt+S, nhãn phím, lưu/mở lại, bỏ gán và từ chối giá trị sai. Tạm ngưng router để ghi phím rồi chụp/lưu thiết lập phải giữ giá trị đã cấu hình. Không tạo biểu tượng khay thật hoặc ghi AppData thật.
+- DevicesPageSmoke: 118 assertions, gồm ghi phím bên trong hộp thoại mà không mở cửa sổ tương tác thật; giữ Enter/Space qua key-up để tránh tự nhấn Lưu sau khi ghi, cho phép gán Esc/Tab và bảo vệ tổ hợp dành riêng.
+- SessionSmoke: 443 assertions; phím F9 và Ctrl+Alt+Space chạy qua sender thật, TLS localhost và worker B khi hai form ẩn trong trạng thái khay. Xác minh tọa độ giữa B, không chuyển lặp, không rò phím kích hoạt, nhả đủ phím/modifier trước leave, thu hồi/cấp lại quyền và tạm ngưng để ghi phím mà giữ nguyên phiên/cấu hình. Không cài hook hoặc gọi SendInput thật.
+- Render ẩn ở kích thước mặc định/tối thiểu và hộp gán phím đã được xem trực tiếp. Tùy chọn `LANBRIDGE_UI_PREVIEW_DIR` trỏ tới thư mục con trong `.tools` xuất bốn ảnh và thêm bốn assertions (DevicesPageSmoke 122); kiểm tra thanh cuộn xuất hiện và cuộn tới đủ ô chat ở kích thước tối thiểu. Không Show/kích hoạt cửa sổ; phần native ComboBox/RichTextBox vẫn có hạn chế trong DrawToBitmap.
+
 ## Thử trên hai máy thật
 
-1. Mở bản 0.6.0 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
+1. Mở bản 0.7.0 trên A/B cùng LAN, cho phép mạng Riêng tư qua tường lửa; trang Thiết bị phải tự hiện máy kia. Bấm Kết nối trên A, thử Từ chối rồi yêu cầu lại và Đồng ý trên B. Thử đóng A trong lúc chờ và để yêu cầu hết hạn; B phải trở về sẵn sàng. Thử đóng B và xác minh thẻ biến mất sau khoảng 7–9 giây, mở lại và kết nối lại. Thử Ethernet và Wi-Fi; mạng chặn discovery dùng trang Kết nối bằng mã.
 2. Chọn đúng vị trí B; thử chuyển ngay sang B, trở lại A, sang B tiếp mà không đợi và hotkey Ctrl+Alt+F12. Thử trái/phải, cuộn, middle/X buttons và gõ trong Notepad trên B. Trên A chọn Telex gõ `tieengs Vieetj`, VNI gõ `tie6ng1 Vie6t5`; cả hai cần ra `tiếng Việt`. Thử Backspace, chữ hoa, Ctrl+C/V/Z, Shift+mũi tên, Shift+click và chuyển sang Phím gốc. Tắt bộ gõ ngoài nếu can thiệp; không cần UniKey B cho chế độ tích hợp.
 3. Trong lúc giữ Shift hoặc nút chuột trên B, rút mạng hoặc ngắt kết nối. Kiểm tra A lấy lại chuột và B không còn phím/nút bị giữ.
 4. Trên B tắt quyền Chuột/phím khi A đang điều khiển. Xác minh A nhận lại chuột và không tiếp tục thao tác được B cho tới khi B bật quyền lại.
@@ -94,5 +105,7 @@ Toàn bộ 15 bộ kiểm tra đạt cho 0.6.0: DevicesPageSmoke 81, Preferences
 13. Mở trang dài trên B, vừa rê chuột qua các vùng khác nhau vừa cuộn dọc/ngang, đổi chiều, giữ Ctrl/Shift và kéo thanh cuộn. Thử các mức polling chuột đang có (125/500/1.000/8.000 Hz), lúc gửi file/ảnh và thu nhỏ ứng dụng. Kiểm tra không mất nấc, cuộn sai vị trí, dồn thao tác cũ hoặc tự ngắt; so sánh Ethernet/Wi-Fi và ghi lại tải máy nếu còn giật.
 14. Trên A/B mở Đo độ trễ, thao tác 15–20 giây tới khi tái hiện khựng, tạm dừng hiển thị rồi chép hai báo cáo. So sánh RTT với chờ gửi trên A, chờ pump/SendInput/hook-age trên B; giữ cả tuổi mẫu và số mẫu. Thử lại cả hai bằng dây LAN nếu có sẵn để đối chiếu đường Wi-Fi. RTT thấp hoặc SendInput gọi nhanh chưa xác nhận target app trên B đã nhận/vẽ xong.
 15. Chọn vị trí B bằng sơ đồ và danh sách, đổi tốc độ 50/100/200% khi đang rê/kéo/cuộn, đổi bộ gõ rồi đóng/mở lại. Các lựa chọn phải được nhớ; ghép nối và quyền vẫn đi theo phiên. Bật/tắt Thu nhỏ xuống khay, thử nút −, nút Ẩn xuống khay, bấm đúp/chuột phải biểu tượng, mở lại EXE khi đang ẩn và lệnh Thoát. Khi B đang ẩn, A yêu cầu kết nối: cửa sổ B phải hiện lại để người dùng Đồng ý/Từ chối; thử cả timeout. Nút × vẫn thoát dù tùy chọn khay đã bật.
+16. Trên A mở **Phiên điều khiển → Gán phím chuyển A ⇄ B… → Bấm để gán phím**, nhấn F9 rồi **Lưu**. Đặt con trỏ giữa A, nhấn F9: phải sang giữa B; nhấn lại phải về vị trí trước đó trên A. Giữ F9 không được chuyển lặp. Thử Ctrl+Alt+Space, Ctrl/Alt trái/phải, phím đơn, Esc/Tab/Enter, đang Telex và đang giữ nút chuột. Kiểm tra không kẹt modifier hoặc gõ phím chuyển vào B. Thử Hủy và Bỏ gán/Lưu, đóng/mở lại, chạy ở khay và chọn lại vai trò. Ctrl+Alt+F12 vẫn phải thoát khẩn cấp; B thu hồi quyền thì phím chuyển không được tiếp tục điều khiển.
+17. Thử A 0.7.0 với B 0.6.1: discovery, B Đồng ý, gán và bấm phím chuyển hai chiều, chuyển mép, thu hồi quyền và ngắt phiên. Đây là thay đổi xử lý ở A, không thêm loại gói giao thức; cập nhật B không phải điều kiện để dùng phím chuyển.
 
 Các bước trên là kế hoạch xác minh thủ công; chưa được đánh dấu đạt cho hai máy thật.

@@ -17,7 +17,8 @@ try
     Check(!Directory.Exists(Path.GetDirectoryName(path)), "Constructing a preferences store created a directory.");
     Check(store.Load() == defaults && !File.Exists(path), "Missing preferences should use defaults without writing a file.");
     Check(defaults.Edge == ScreenEdge.Right && defaults.TypingMode == TypingMode.VietnameseTelex
-        && defaults.MouseSpeedPercent == 100 && !defaults.MinimizeToTray, "Convenience defaults changed existing behavior.");
+        && defaults.MouseSpeedPercent == 100 && !defaults.MinimizeToTray && defaults.SwitchShortcut == null,
+        "Convenience defaults changed existing behavior.");
 
     foreach (var edge in Enum.GetValues<ScreenEdge>())
     foreach (var typing in Enum.GetValues<TypingMode>())
@@ -30,10 +31,12 @@ try
     }
     using (var document = JsonDocument.Parse(File.ReadAllBytes(path)))
     {
-        var expectedFields = new HashSet<string> { "schemaVersion", "edge", "typingMode", "mouseSpeedPercent", "minimizeToTray" };
+        var expectedFields = new HashSet<string> { "schemaVersion", "edge", "typingMode", "mouseSpeedPercent", "minimizeToTray", "switchShortcut" };
         Check(document.RootElement.EnumerateObject().All(property => expectedFields.Remove(property.Name)) && expectedFields.Count == 0,
             "Saved settings contain fields outside the convenience-only allowlist.");
         Check(document.RootElement.GetProperty("schemaVersion").GetInt32() == 1, "Settings schema version is missing.");
+        Check(document.RootElement.GetProperty("switchShortcut").ValueKind == JsonValueKind.Null,
+            "A shortcut must be opt-in for existing users.");
     }
     Check(!Directory.EnumerateFiles(Path.GetDirectoryName(path)!, "*.tmp").Any(), "A successful save left temporary files behind.");
 
@@ -57,6 +60,65 @@ try
     Check(store.Load() == partial, "Valid fields or forward-compatible unknown fields were mishandled.");
     Check(store.TrySave(store.Load()) && !File.ReadAllText(path).Contains("pairingCode", StringComparison.Ordinal),
         "Saving loaded settings retained an unknown secret field.");
+
+    // Old files keep their existing options; assigning or clearing a shortcut only changes that field.
+    foreach (int key in new[] { 0x08, 0x09, 0x0D, 0x1B, 0x20, 0x25, 0x41, 0x5A, 0x60, 0x70, 0x87, 0xBA, 0xE2, 0xFE })
+    foreach (var modifiers in new[] { ShortcutModifiers.None, ShortcutModifiers.Control,
+        ShortcutModifiers.Alt | ShortcutModifiers.Shift, ShortcutModifiers.Control | ShortcutModifiers.Alt | ShortcutModifiers.Windows })
+    {
+        Check(SwitchShortcut.TryCreate(key, modifiers, out var shortcut) && shortcut != null,
+            "A valid ordinary key or chord was rejected.");
+        var withShortcut = partial with { SwitchShortcut = shortcut };
+        Check(store.TrySave(withShortcut) && store.Load() == withShortcut,
+            "A shortcut did not survive a settings round trip.");
+    }
+    var functionShortcut = new SwitchShortcut(0x71, ShortcutModifiers.Control | ShortcutModifiers.Alt);
+    Check(functionShortcut.DisplayName == "Ctrl + Alt + F2" && functionShortcut.ToString() == functionShortcut.DisplayName,
+        "Shortcut labels do not clearly identify the assigned key and modifiers.");
+    Check(new SwitchShortcut(0x41).DisplayName == "A" && new SwitchShortcut(0x09).DisplayName == "Tab"
+        && new SwitchShortcut(0x1B).DisplayName == "Esc" && new SwitchShortcut(0x25).DisplayName == "←"
+        && new SwitchShortcut(0xBA).DisplayName == "OEM BA", "Common key labels are ambiguous.");
+    Check(store.TrySave(partial with { SwitchShortcut = functionShortcut }), "Could not prepare shortcut JSON test.");
+    using (var shortcutDocument = JsonDocument.Parse(File.ReadAllBytes(path)))
+    {
+        var savedShortcut = shortcutDocument.RootElement.GetProperty("switchShortcut");
+        Check(savedShortcut.GetProperty("key").GetInt32() == 0x71
+            && savedShortcut.GetProperty("modifiers").GetInt32() == 3
+            && savedShortcut.EnumerateObject().Count() == 2, "Shortcut JSON contains an unexpected value or field.");
+    }
+    Check(store.TrySave(partial) && store.Load().SwitchShortcut == null, "Clearing a shortcut did not persist.");
+    foreach (int key in new[] { int.MinValue, -1, 0, 7, 255, int.MaxValue, 0x10, 0x11, 0x12, 0x5B, 0x5C, 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5 })
+    {
+        Check(!SwitchShortcut.TryCreate(key, ShortcutModifiers.None, out var rejected) && rejected == null,
+            "An invalid key or a modifier-only shortcut was accepted.");
+        Check(store.TrySave(partial with { SwitchShortcut = new SwitchShortcut(key) }) && store.Load() == partial,
+            "Saving an invalid typed shortcut discarded unrelated preferences or retained the shortcut.");
+    }
+    foreach (var reserved in new[] {
+        new SwitchShortcut(0x7B, ShortcutModifiers.Control | ShortcutModifiers.Alt),
+        new SwitchShortcut(0x7B, ShortcutModifiers.Control | ShortcutModifiers.Alt | ShortcutModifiers.Shift),
+        new SwitchShortcut(0x2E, ShortcutModifiers.Control | ShortcutModifiers.Alt),
+        new SwitchShortcut(0x4C, ShortcutModifiers.Windows),
+        new SwitchShortcut(0x4C, ShortcutModifiers.Windows | ShortcutModifiers.Control),
+        new SwitchShortcut(0x41, (ShortcutModifiers)16),
+        new SwitchShortcut(0x41, (ShortcutModifiers)(-1)),
+    })
+    {
+        Check(!reserved.IsValid, "A reserved escape/security chord or unknown modifier flag was accepted.");
+        Check(store.TrySave(partial with { SwitchShortcut = reserved }) && store.Load() == partial,
+            "An invalid shortcut was not normalized independently on save.");
+    }
+    foreach (string invalidShortcut in new[] { "null", "true", "42", "\"F2\"", "[]", "{}", "{\"key\":113}",
+        "{\"modifiers\":3}", "{\"key\":\"113\",\"modifiers\":3}", "{\"key\":113,\"modifiers\":\"3\"}",
+        "{\"key\":113.5,\"modifiers\":3}", "{\"key\":2147483648,\"modifiers\":3}",
+        "{\"key\":113,\"modifiers\":16}", "{\"key\":123,\"modifiers\":3}", "{\"key\":17,\"modifiers\":0}" })
+    {
+        Write($"{{\"edge\":\"Top\",\"typingMode\":1,\"mouseSpeedPercent\":150,\"minimizeToTray\":true,\"switchShortcut\":{invalidShortcut}}}");
+        Check(store.Load() == partial, "An invalid shortcut affected unrelated valid preferences.");
+    }
+    Write("{\"switchShortcut\":{\"key\":65,\"modifiers\":0,\"futureField\":true}}");
+    Check(store.Load() == defaults with { SwitchShortcut = new SwitchShortcut(0x41) },
+        "A valid bare-key shortcut or a forward-compatible unknown shortcut field was rejected.");
 
     foreach (string invalidEdge in new[] { "\"sideways\"", "5", "-1", "null", "true", "{}" })
     {

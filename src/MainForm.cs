@@ -79,6 +79,7 @@ public sealed partial class MainForm : Form
         _hint.Text = IsHost ? "Chọn IP mạng LAN, bật nhận kết nối rồi gửi mã ghép nối cho máy A." : "Dán mã ghép nối hiển thị trên máy B vào ô bên dưới.";
         _input.IsController = !IsHost; ApplyPermissions();
         _screenLayout.Enabled = _edge.Enabled = _pointerSpeed.Enabled = _typing.Enabled = !IsHost;
+        RefreshSwitchShortcutControls();
     }
 
     async Task ConnectOrListen()

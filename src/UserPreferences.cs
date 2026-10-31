@@ -10,6 +10,7 @@ public sealed record UserPreferences
     public TypingMode TypingMode { get; init; } = TypingMode.VietnameseTelex;
     public int MouseSpeedPercent { get; init; } = 100;
     public bool MinimizeToTray { get; init; }
+    public SwitchShortcut? SwitchShortcut { get; init; }
 }
 
 /// <summary>
@@ -54,6 +55,7 @@ public sealed class UserPreferencesStore
                 MouseSpeedPercent = root.TryGetProperty("mouseSpeedPercent", out var speed)
                     && TryInteger(speed, out int percent) && ValidSpeed(percent) ? percent : 100,
                 MinimizeToTray = root.TryGetProperty("minimizeToTray", out var tray) && tray.ValueKind == JsonValueKind.True,
+                SwitchShortcut = ReadShortcut(root),
             };
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or SecurityException or JsonException)
@@ -78,6 +80,8 @@ public sealed class UserPreferencesStore
                 typingMode = (Enum.IsDefined(preferences.TypingMode) ? preferences.TypingMode : TypingMode.VietnameseTelex).ToString(),
                 mouseSpeedPercent = ValidSpeed(preferences.MouseSpeedPercent) ? preferences.MouseSpeedPercent : 100,
                 minimizeToTray = preferences.MinimizeToTray,
+                switchShortcut = preferences.SwitchShortcut is { IsValid: true } shortcut
+                    ? new { key = shortcut.Key, modifiers = (int)shortcut.Modifiers } : null,
             }, JsonOptions);
             using (var file = new FileStream(temporaryPath, FileMode.CreateNew, FileAccess.Write, FileShare.None))
             {
@@ -103,6 +107,14 @@ public sealed class UserPreferencesStore
     }
 
     private static bool ValidSpeed(int percent) => percent >= MinimumMouseSpeedPercent && percent <= MaximumMouseSpeedPercent;
+
+    private static SwitchShortcut? ReadShortcut(JsonElement root)
+    {
+        if (!root.TryGetProperty("switchShortcut", out var value) || value.ValueKind != JsonValueKind.Object
+            || !value.TryGetProperty("key", out var key) || !TryInteger(key, out int keyCode)
+            || !value.TryGetProperty("modifiers", out var modifiers) || !TryInteger(modifiers, out int modifierFlags)) return null;
+        return SwitchShortcut.TryCreate(keyCode, (ShortcutModifiers)modifierFlags, out var shortcut) ? shortcut : null;
+    }
 
     private static bool TryInteger(JsonElement value, out int number)
     {

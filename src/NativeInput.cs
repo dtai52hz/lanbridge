@@ -60,6 +60,23 @@ public sealed class InputRouter : IDisposable
         get => Volatile.Read(ref _mouseSpeedPercent);
         set => OnOwner(() => Volatile.Write(ref _mouseSpeedPercent, Math.Clamp(value, 50, 200)));
     }
+    /// <summary>A physical shortcut on controller A toggles control of its approved peer. Null disables it.</summary>
+    public SwitchShortcut? SwitchShortcut
+    {
+        get => Volatile.Read(ref _switchShortcut);
+        set => OnOwner(() =>
+        {
+            Volatile.Write(ref _switchShortcut, value is { IsValid: true } ? value : null);
+            _switchEntrySuspended = false;
+        });
+    }
+    /// <summary>Returns control to A and suspends hotkey/edge entry until SwitchShortcut is restored after capture UI.</summary>
+    public Task SuspendSwitchShortcutAsync() => OnOwnerAsync(() =>
+    {
+        _switchEntrySuspended = true;
+        Volatile.Write(ref _switchShortcut, null);
+        ReleaseCore(true);
+    }, CancellationToken.None);
     public TypingMode TypingMode
     {
         get => _composer.Mode;
@@ -89,14 +106,20 @@ public sealed class InputRouter : IDisposable
     private int _disposeRequested;
     private bool _nativeInputEnabled;
     private int _mouseSpeedPercent = 100;
+    private SwitchShortcut? _switchShortcut;
+    private bool _switchEntrySuspended;
     private System.Windows.Forms.Timer? _timer;
     private Rectangle _bounds;
     private Point _lastLocalPoint, _anchor;
+    private Point? _shortcutReturnPoint;
     private double _remoteX, _remoteY;
     private int _lastNormX, _lastNormY;
     private long _edgeSince, _boundsReadAt;
     private bool _edgeCandidate;
     private readonly Dictionary<int, KeyStroke> _physicalKeys = [];
+    // Shortcut components remain physically tracked for matching/emergency release, but are
+    // absent from remote typing until their real key ups (including key-down autorepeat).
+    private readonly HashSet<int> _switchConsumedKeys = [];
     private readonly Dictionary<int, KeyStroke> _receivedKeys = [];
     private readonly Dictionary<int, KeyStroke> _sentKeys = [];
     private readonly VietnameseComposer _composer = new();
@@ -136,6 +159,13 @@ public sealed class InputRouter : IDisposable
     internal Action<Array>? NativeInputBatchForTesting { get; set; }
     internal Action? NativeWorkQueuedForTesting { get; set; }
     internal Task InvokeForTestingAsync(Action action) => OnOwnerAsync(action, CancellationToken.None);
+    internal async Task<bool> RoutePhysicalKeyForTestingAsync(int key, bool down, int scan = 0, bool extended = false)
+    {
+        if (_nativeInputEnabled) throw new InvalidOperationException("Physical-key tests require a native-disabled router.");
+        bool consumed = false;
+        await OnOwnerAsync(() => consumed = ProcessPhysicalKey(new(key, scan, extended), down), CancellationToken.None).ConfigureAwait(false);
+        return consumed;
+    }
 
     private void StartDispatcher(bool nativeInputEnabled)
     {
@@ -534,16 +564,19 @@ public sealed class InputRouter : IDisposable
             }
             _boundsReadAt = now;
         }
-        if (!_controller || !_allowed || _remote || !_edgeCandidate) return;
+        if (!_controller || !_allowed || _remote || _switchEntrySuspended || !_edgeCandidate) return;
         var point = Cursor.Position;
         if (!IsAtExit(point)) { _edgeCandidate = false; return; }
         if (now - _edgeSince >= Math.Clamp(EdgeDwellMilliseconds, 0, 2000)) EnterRemote(point);
     }
 
-    private void EnterRemote(Point point)
+    private void EnterRemote(Point point) => EnterRemoteCore(point, false);
+
+    private void EnterRemoteCore(Point point, bool fromShortcut)
     {
-        if (_remote || !_allowed || Send is null || !_started || Volatile.Read(ref _nativeOutstanding) != 0) return;
+        if (_remote || !_allowed || _switchEntrySuspended || Send is null || !_started || Volatile.Read(ref _nativeOutstanding) != 0) return;
         _edgeCandidate = false;
+        _shortcutReturnPoint = fromShortcut ? point : null;
         _remote = true;
         _composer.Reset(); _textKeys.Clear(); _textCapsLock = (GetKeyState(0x14) & 1) != 0;
         LastError = null;
@@ -552,7 +585,12 @@ public sealed class InputRouter : IDisposable
         var ny = Normalize(point.Y, _bounds.Top, _bounds.Height);
         _remoteX = nx * (width - 1d) / 65535d;
         _remoteY = ny * (height - 1d) / 65535d;
-        switch (ExitEdge)
+        if (fromShortcut)
+        {
+            _remoteX = (width - 1d) / 2;
+            _remoteY = (height - 1d) / 2;
+        }
+        else switch (ExitEdge)
         {
             case ScreenEdge.Right: _remoteX = Math.Min(3, width - 1); break;
             case ScreenEdge.Left: _remoteX = Math.Max(0, width - 4); break;
@@ -565,8 +603,10 @@ public sealed class InputRouter : IDisposable
         // separately, so injected releases never confuse the emergency shortcut or subsequent ups.
         foreach (var key in _physicalKeys.Values)
         {
-            InjectKey(key, false);
-            SendKey(key, true);
+            // The triggering down is consumed before Windows sees it. Held modifiers and
+            // unrelated keys already reached A and still need their local release.
+            if (!fromShortcut || key.Key != _switchShortcut?.Key) InjectKey(key, false);
+            if (!_switchConsumedKeys.Contains(key.Key)) SendKey(key, true);
         }
         foreach (var button in _physicalButtons)
         {
@@ -642,7 +682,7 @@ public sealed class InputRouter : IDisposable
         var dx = point.X - _lastLocalPoint.X;
         var dy = point.Y - _lastLocalPoint.Y;
         _lastLocalPoint = point;
-        if (!_controller || !_allowed || _remote) { _edgeCandidate = false; return false; }
+        if (!_controller || !_allowed || _remote || _switchEntrySuspended) { _edgeCandidate = false; return false; }
         bool outward = ExitEdge switch
         {
             ScreenEdge.Right => dx >= 0,
@@ -697,21 +737,7 @@ public sealed class InputRouter : IDisposable
                 return CallNextHookEx(_keyboardHook, code, message, data);
             bool down = msg is 0x0100 or 0x0104;
             var key = new KeyStroke((int)item.VkCode, (int)(item.ScanCode & 0xff), (item.Flags & 1) != 0);
-            if (down) _physicalKeys[key.Key] = key; else _physicalKeys.Remove(key.Key);
-            bool control = HasPhysical(0x11, 0xA2, 0xA3), alt = HasPhysical(0x12, 0xA4, 0xA5);
-            if (key.Key == 0x7B && down && control && alt)
-            {
-                EmergencyReleaseCore();
-                return CallNextHookEx(_keyboardHook, code, message, data);
-            }
-            if (_emergencyChord)
-            {
-                // Keep the shortcut's releases local even if UI/network callbacks run immediately.
-                if (!control && !alt && !_physicalKeys.ContainsKey(0x7B)) _emergencyChord = false;
-                return CallNextHookEx(_keyboardHook, code, message, data);
-            }
-            if (_controller && _remote) { RouteControllerKey(key, down); return new IntPtr(1); }
-            if (!_controller && _remote && _blockLocal) return new IntPtr(1);
+            if (ProcessPhysicalKey(key, down)) return new IntPtr(1);
             return CallNextHookEx(_keyboardHook, code, message, data);
         }
         catch (Exception error)
@@ -724,6 +750,62 @@ public sealed class InputRouter : IDisposable
 
     private bool HasPhysical(int generic, int left, int right) =>
         _physicalKeys.ContainsKey(generic) || _physicalKeys.ContainsKey(left) || _physicalKeys.ContainsKey(right);
+
+    private bool ProcessPhysicalKey(KeyStroke key, bool down)
+    {
+        bool repeat = _physicalKeys.ContainsKey(key.Key);
+        if (down) _physicalKeys[key.Key] = key; else _physicalKeys.Remove(key.Key);
+        bool control = HasPhysical(0x11, 0xA2, 0xA3), alt = HasPhysical(0x12, 0xA4, 0xA5);
+        if (key.Key == 0x7B && down && control && alt)
+        {
+            EmergencyReleaseCore();
+            return false;
+        }
+        if (_emergencyChord)
+        {
+            // Keep the emergency chord local even if UI/network callbacks run immediately.
+            if (!down) _switchConsumedKeys.Remove(key.Key);
+            if (!control && !alt && !_physicalKeys.ContainsKey(0x7B)) _emergencyChord = false;
+            return false;
+        }
+        if (_switchConsumedKeys.Contains(key.Key))
+        {
+            if (!down) _switchConsumedKeys.Remove(key.Key);
+            return true;
+        }
+        var shortcut = _switchShortcut;
+        if (down && !repeat && _controller && _allowed && _started && !_disposed && Send is not null
+            && shortcut is not null && shortcut.Key == key.Key && shortcut.Modifiers == PhysicalModifiers())
+        {
+            // Never consume a shortcut that cannot currently enter its approved receiver.
+            // Return can always proceed, while entry waits for any former receiver cleanup.
+            if (_remote || Volatile.Read(ref _nativeOutstanding) == 0)
+            {
+                _switchConsumedKeys.Add(key.Key);
+                foreach (int held in _physicalKeys.Keys.Where(IsModifier)) _switchConsumedKeys.Add(held);
+                if (_remote) ReleaseCore(true);
+                else EnterRemoteCore(Cursor.Position, true);
+                return true;
+            }
+        }
+        if (_controller && _remote) { RouteControllerKey(key, down); return true; }
+        return !_controller && _remote && _blockLocal;
+    }
+
+    private ShortcutModifiers PhysicalModifiers()
+    {
+        ShortcutModifiers modifiers = ShortcutModifiers.None;
+        if (HasPhysical(0x11, 0xA2, 0xA3)) modifiers |= ShortcutModifiers.Control;
+        if (HasPhysical(0x12, 0xA4, 0xA5)) modifiers |= ShortcutModifiers.Alt;
+        if (HasPhysical(0x10, 0xA0, 0xA1)) modifiers |= ShortcutModifiers.Shift;
+        if (_physicalKeys.ContainsKey(0x5B) || _physicalKeys.ContainsKey(0x5C)) modifiers |= ShortcutModifiers.Windows;
+        return modifiers;
+    }
+
+    private bool HasRoutedPhysical(int generic, int left, int right) =>
+        IsRoutedPhysical(generic) || IsRoutedPhysical(left) || IsRoutedPhysical(right);
+
+    private bool IsRoutedPhysical(int key) => _physicalKeys.ContainsKey(key) && !_switchConsumedKeys.Contains(key);
 
     private void EmergencyReleaseCore()
     {
@@ -739,7 +821,9 @@ public sealed class InputRouter : IDisposable
     private static bool IsShift(int key) => key is 0x10 or 0xA0 or 0xA1;
     private static bool IsShortcutModifier(int key) => key is 0x11 or 0x12 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C;
     private static bool IsModifier(int key) => IsShift(key) || IsShortcutModifier(key);
-    private bool HasShortcutModifier() => HasPhysical(0x11, 0xA2, 0xA3) || HasPhysical(0x12, 0xA4, 0xA5) || _physicalKeys.ContainsKey(0x5B) || _physicalKeys.ContainsKey(0x5C);
+    private bool HasShortcutModifier() => HasRoutedPhysical(0x11, 0xA2, 0xA3) || HasRoutedPhysical(0x12, 0xA4, 0xA5)
+        || (_physicalKeys.ContainsKey(0x5B) && !_switchConsumedKeys.Contains(0x5B))
+        || (_physicalKeys.ContainsKey(0x5C) && !_switchConsumedKeys.Contains(0x5C));
 
     private void RouteControllerKey(KeyStroke key, bool down)
     {
@@ -778,7 +862,7 @@ public sealed class InputRouter : IDisposable
 
     private void SendPhysicalShifts()
     {
-        foreach (var shift in _physicalKeys.Values.Where(k => IsShift(k.Key)))
+        foreach (var shift in _physicalKeys.Values.Where(k => IsShift(k.Key) && !_switchConsumedKeys.Contains(k.Key)))
             if (!_sentKeys.ContainsKey(shift.Key)) SendKey(shift, true);
     }
     private void ReleaseUnneededShift()
@@ -794,8 +878,9 @@ public sealed class InputRouter : IDisposable
         text = "";
         if (IsModifier(key.Key) || key.Key is 0x0D or 0x09 or 0x1B or 0x2E || key.Key is >= 0x21 and <= 0x28 || key.Key is >= 0x70 and <= 0x87) return false;
         Array.Clear(_translationState);
-        foreach (int held in _physicalKeys.Keys) if (held is >= 0 and < 256) _translationState[held] |= 0x80;
-        _translationState[0x10] = HasPhysical(0x10, 0xA0, 0xA1) ? (byte)0x80 : (byte)0;
+        foreach (int held in _physicalKeys.Keys)
+            if (held is >= 0 and < 256 && !_switchConsumedKeys.Contains(held)) _translationState[held] |= 0x80;
+        _translationState[0x10] = HasRoutedPhysical(0x10, 0xA0, 0xA1) ? (byte)0x80 : (byte)0;
         _translationState[0x14] = _textCapsLock ? (byte)1 : (byte)0;
         var layoutThread = GetWindowThreadProcessId(GetForegroundWindow(), out _);
         var output = new StringBuilder(16);
@@ -852,10 +937,11 @@ public sealed class InputRouter : IDisposable
                 case ScreenEdge.Top: y = _bounds.Top + Math.Min(9, _bounds.Height - 1); break;
                 case ScreenEdge.Bottom: y = _bounds.Bottom - Math.Min(10, _bounds.Height); break;
             }
-            var target = ClampToScreen(new(x, y));
+            var target = ClampToScreen(_shortcutReturnPoint ?? new Point(x, y));
             WarpLocal(target);
             _lastLocalPoint = target;
         }
+        _shortcutReturnPoint = null;
         if (wasRemote) NotifyRemoteChanged(false);
     }
 

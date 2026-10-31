@@ -16,7 +16,9 @@ internal static class Program
         {
             Run();
             ScreenLayoutPickerChecks.Run(Check);
+            SwitchShortcutDialogChecks.Run(Check);
             RunMainFormContract();
+            HiddenShortcutPreview.Run(Check);
             Console.WriteLine($"Devices page smoke passed: {_assertions} assertions; hidden controls only, no networking or input hooks.");
             return 0;
         }

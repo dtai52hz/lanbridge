@@ -1,3 +1,12 @@
+# 0.7.0
+
+- Thêm phím chuyển A ⇄ B tùy chọn trên máy A: gán một phím hoặc tổ hợp, nhấn để chuyển con trỏ tới giữa màn hình B, nhấn lại để về vị trí cũ trên A. Cách chuyển qua mép vẫn dùng được.
+- Thêm hộp ghi phím tại Phiên điều khiển: ghi phím đơn/tổ hợp, Lưu, Hủy và Bỏ gán; mặc định chưa gán. Nhớ lựa chọn trong thiết lập hiện có và tiếp tục dùng khi thu nhỏ/chạy ở khay.
+- Chỉ chuyển khi đang nối đúng vai trò A và B đã cấp quyền chuột/phím; phím được dành cho chuyển máy trong phiên có quyền, chống tự lặp khi giữ phím và nhả thành phần tổ hợp khi đổi máy. Ctrl + Alt + F12 vẫn là phím thoát khẩn cấp.
+- Tạm ngưng phím chuyển cũ và trả điều khiển về A trước khi mở hộp ghi phím; Hủy giữ lựa chọn trước đó. Tác vụ lưu thiết lập trong lúc ghi không làm mất phím đã chọn.
+- Sửa vùng cuộn trang phiên ở kích thước cửa sổ tối thiểu để vẫn tới được ô chat sau khi thêm hàng phím chuyển.
+- Thêm kiểm tra phím chuyển, UI ghi phím và lưu/mở lại thiết lập bằng đầu vào giả, không cài hook hoặc sửa desktop đang dùng. Giao thức chuyển máy giữ nguyên: A 0.7.0 dùng được với B 0.6.1.
+
 # 0.6.1
 
 - Công khai repository và bổ sung giấy phép MIT riêng cho mã nguồn LanBridge, giữ giấy phép/thông báo của các thành phần bên thứ ba.

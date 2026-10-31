@@ -44,6 +44,7 @@ internal static class Program
             await CheckPreviewIsolationAsync();
             await CheckRestoredPreferencesAsync(Path.Combine(root, "restore", "preferences.json"));
             await CheckLatestPreferencesAsync(Path.Combine(root, "latest", "preferences.json"));
+            await CheckSwitchShortcutPreferencesAsync(Path.Combine(root, "shortcut", "preferences.json"));
             CheckTrayLifecycle();
             CheckCloseCleanup();
         }
@@ -68,6 +69,7 @@ internal static class Program
                 "A preview must not register a real notification-area icon or menu.");
             var input = Get<InputRouter>(form, "_input");
             Check(input.MouseSpeedPercent == 100 && input.TypingMode == TypingMode.VietnameseTelex
+                && input.SwitchShortcut is null && Get<SwitchShortcut?>(form, "_configuredSwitchShortcut") is null
                 && Get<ComboBox>(form, "_edge").SelectedIndex == (int)ScreenEdge.Right,
                 "A default preview inherited preferences from outside its test.");
             Get<NumericUpDown>(form, "_pointerSpeed").Value = 175;
@@ -85,7 +87,8 @@ internal static class Program
         var expected = new UserPreferences
         {
             Edge = ScreenEdge.Top, TypingMode = TypingMode.VietnameseVni,
-            MouseSpeedPercent = 175, MinimizeToTray = true
+            MouseSpeedPercent = 175, MinimizeToTray = true,
+            SwitchShortcut = new SwitchShortcut(0x77), // F8 without modifiers.
         };
         Check(new UserPreferencesStore(path).TrySave(expected), "Could not prepare isolated startup preferences.");
         using var form = CreateForm(path);
@@ -100,15 +103,19 @@ internal static class Program
                 "Startup did not restore the position picker, typing, pointer speed and tray preference together.");
             Call(form, "ApplyPermissions");
             Check(input.ExitEdge == expected.Edge && input.TypingMode == expected.TypingMode
-                && input.MouseSpeedPercent == expected.MouseSpeedPercent && !input.CanControl,
+                && input.MouseSpeedPercent == expected.MouseSpeedPercent && !input.CanControl
+                && input.SwitchShortcut == expected.SwitchShortcut
+                && Get<SwitchShortcut?>(form, "_configuredSwitchShortcut") == expected.SwitchShortcut,
                 "Restored convenience preferences did not reach the disabled input router.");
+            Check(Get<Button>(form, "_switchShortcutButton").Text.Contains(expected.SwitchShortcut.DisplayName, StringComparison.Ordinal),
+                "The shortcut control did not show the restored assignment.");
 
             Get<ComboBox>(form, "_role").SelectedIndex = 1;
             Get<TextBox>(form, "_pairing").Text = "LB1|private-secret-must-not-persist";
             foreach (var permission in Get<Dictionary<string, CheckBox>>(form, "_checks").Values) permission.Checked = true;
             await (Task)Call(form, "FlushPreferencesAsync")!;
             using var document = JsonDocument.Parse(await File.ReadAllBytesAsync(path));
-            var allowed = new HashSet<string> { "schemaVersion", "edge", "typingMode", "mouseSpeedPercent", "minimizeToTray" };
+            var allowed = new HashSet<string> { "schemaVersion", "edge", "typingMode", "mouseSpeedPercent", "minimizeToTray", "switchShortcut" };
             Check(document.RootElement.EnumerateObject().All(property => allowed.Remove(property.Name)) && allowed.Count == 0,
                 "Form preferences persisted connection, permission, role or other state outside the convenience allowlist.");
             Check(!File.ReadAllText(path).Contains("private-secret", StringComparison.Ordinal)
@@ -125,9 +132,110 @@ internal static class Program
             Check(Get<ComboBox>(reopened, "_role").SelectedIndex == 0 && Get<TextBox>(reopened, "_pairing").TextLength == 0
                 && !permissions.Audio && !permissions.Restart && !permissions.Recording && !permissions.BlockInput && !permissions.Privacy,
                 "Reopening convenience preferences restored a role, pairing credential or elevated permission.");
+            Check(Get<InputRouter>(reopened, "_input").SwitchShortcut == expected.SwitchShortcut,
+                "Reopening did not restore the configured shortcut independently of session authority.");
             AssertInert(reopened);
         }
         finally { reopened.Close(); }
+    }
+
+    private static async Task CheckSwitchShortcutPreferencesAsync(string path)
+    {
+        Directory.CreateDirectory(Path.GetDirectoryName(path)!);
+        // A pre-shortcut schema-1 file remains usable and does not opt into a new global shortcut.
+        await File.WriteAllTextAsync(path, "{\"schemaVersion\":1,\"edge\":\"Bottom\",\"mouseSpeedPercent\":125}");
+        using (var legacy = CreateForm(path))
+        {
+            try
+            {
+                Check(Get<InputRouter>(legacy, "_input").SwitchShortcut is null
+                    && Get<SwitchShortcut?>(legacy, "_configuredSwitchShortcut") is null
+                    && Get<NumericUpDown>(legacy, "_pointerSpeed").Value == 125
+                    && Get<ComboBox>(legacy, "_edge").SelectedIndex == (int)ScreenEdge.Bottom,
+                    "Legacy preferences did not preserve their values with the new shortcut disabled.");
+                AssertInert(legacy);
+            }
+            finally { legacy.Close(); }
+        }
+
+        foreach (var shortcut in new[] { new SwitchShortcut(0x77), new SwitchShortcut(0x53, ShortcutModifiers.Control | ShortcutModifiers.Alt) })
+        {
+            using (var form = CreateForm(path))
+            {
+                try
+                {
+                    var input = Get<InputRouter>(form, "_input");
+                    Call(form, "ApplySwitchShortcut", shortcut);
+                    Check(input.SwitchShortcut == shortcut && !input.CanControl
+                        && Get<SwitchShortcut?>(form, "_configuredSwitchShortcut") == shortcut,
+                        "Applying a shortcut did not update the local router or enabled remote authority.");
+                    Check(Get<Button>(form, "_switchShortcutButton").Text.Contains(shortcut.DisplayName, StringComparison.Ordinal),
+                        "The shortcut control did not show the assigned key.");
+                    await (Task)Call(form, "FlushPreferencesAsync")!;
+                    Check(new UserPreferencesStore(path).Load().SwitchShortcut == shortcut,
+                        "Applying a shortcut did not persist the assignment.");
+
+                    // Dialog capture temporarily suspends the router while the chosen value must remain durable.
+                    await input.SuspendSwitchShortcutAsync();
+                    Check(input.SwitchShortcut is null && !input.IsRemote && !input.CanControl,
+                        "Shortcut capture suspension left a switch shortcut or remote control active.");
+                    Check(((UserPreferences)Call(form, "CapturePreferences")!).SwitchShortcut == shortcut,
+                        "Capturing preferences during shortcut suspension lost the configured assignment.");
+                    await (Task)Call(form, "FlushPreferencesAsync")!;
+                    Check(new UserPreferencesStore(path).Load().SwitchShortcut == shortcut,
+                        "An unrelated preference save during capture persisted the temporary suspension.");
+                    Call(form, "ApplySwitchShortcut", shortcut);
+
+                    foreach (var invalid in new[] { new SwitchShortcut(0), new SwitchShortcut(0x11),
+                        new SwitchShortcut(0x7B, ShortcutModifiers.Control | ShortcutModifiers.Alt) })
+                    {
+                        bool rejected = false;
+                        try { Call(form, "ApplySwitchShortcut", invalid); }
+                        catch (ArgumentException) { rejected = true; }
+                        Check(rejected && input.SwitchShortcut == shortcut
+                            && Get<SwitchShortcut?>(form, "_configuredSwitchShortcut") == shortcut,
+                            "An invalid shortcut was accepted or damaged the existing assignment.");
+                    }
+                    AssertInert(form);
+                }
+                finally { form.Close(); }
+            }
+            using var reopened = CreateForm(path);
+            try
+            {
+                Check(Get<InputRouter>(reopened, "_input").SwitchShortcut == shortcut
+                    && Get<SwitchShortcut?>(reopened, "_configuredSwitchShortcut") == shortcut
+                    && Get<Button>(reopened, "_switchShortcutButton").Text.Contains(shortcut.DisplayName, StringComparison.Ordinal),
+                    "A saved shortcut did not survive reopening with the expected control label.");
+                AssertInert(reopened);
+            }
+            finally { reopened.Close(); }
+        }
+
+        using (var cleared = CreateForm(path))
+        {
+            try
+            {
+                Call(cleared, "ApplySwitchShortcut", new object?[] { null });
+                Check(Get<InputRouter>(cleared, "_input").SwitchShortcut is null
+                    && Get<SwitchShortcut?>(cleared, "_configuredSwitchShortcut") is null,
+                    "Clearing the shortcut did not update the router and configured value together.");
+                await (Task)Call(cleared, "FlushPreferencesAsync")!;
+                Check(new UserPreferencesStore(path).Load().SwitchShortcut is null,
+                    "Clearing the shortcut did not persist a disabled assignment.");
+                AssertInert(cleared);
+            }
+            finally { cleared.Close(); }
+        }
+        using var final = CreateForm(path);
+        try
+        {
+            Check(Get<InputRouter>(final, "_input").SwitchShortcut is null
+                && Get<SwitchShortcut?>(final, "_configuredSwitchShortcut") is null,
+                "Reopening unexpectedly re-enabled a cleared shortcut.");
+            AssertInert(final);
+        }
+        finally { final.Close(); }
     }
 
     private static async Task CheckLatestPreferencesAsync(string path)

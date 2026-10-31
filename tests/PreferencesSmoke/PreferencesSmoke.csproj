@@ -7,6 +7,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/UserPreferences.cs" Link="UserPreferences.cs" />
+    <Compile Include="../../src/SwitchShortcut.cs" Link="SwitchShortcut.cs" />
     <Compile Include="../../src/Models.cs" Link="Models.cs" />
     <Compile Include="../../src/VietnameseInput.cs" Link="VietnameseInput.cs" />
   </ItemGroup>
