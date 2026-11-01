@@ -1,24 +1,24 @@
-# LanBridge Desktop 0.8.0-preview.1
+# LanBridge Desktop 0.8.0-preview.2
 
 Bản desktop đa nền tảng cho **Windows, macOS và Linux X11**: mỗi máy giữ màn hình riêng, dùng chung chuột/bàn phím trong mạng LAN. Máy nhận phải đồng ý kết nối. Phiên dùng TLS và chứng chỉ được ghim theo thiết bị/mã ghép nối, cùng giao thức của LanBridge Windows 0.7.x.
 
-Đây là **preview riêng**, không thay bản Windows 0.7.2 ổn định. Chưa hỗ trợ Linux Wayland, Android, iOS hoặc mọi biến thể/hệ điều hành khác. Biên dịch được không đồng nghĩa đã kiểm chứng chuột/phím trên tất cả máy thật.
+Đây là **preview riêng**, không thay bản Windows 0.7.3. Có thể nhận điều khiển và chia sẻ màn hình cho [ứng dụng Android](../android/README.md); chưa điều khiển điện thoại từ PC. Chưa hỗ trợ Linux Wayland, iOS hoặc mọi biến thể/hệ điều hành khác. Biên dịch được không đồng nghĩa đã kiểm chứng chuột/phím trên tất cả máy thật.
 
 ## Tải và chọn bản
 
-[Trang Releases chung cho Windows, macOS và Linux](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2). Các gói Desktop giữ nguyên phiên bản `0.8.0-preview.1`, tên file và SHA-256; có thể đối chiếu tại [release preview gốc và tag nguồn](https://github.com/dtai52hz/lanbridge/releases/tag/v0.8.0-preview.1). Bản sửa kênh gõ tiếng Việt của ứng dụng Windows 0.7.2 chưa được chuyển sang Desktop preview.
+[Trang Releases chung cho Windows, macOS, Linux và Android](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.3). Các gói Desktop mang phiên bản `0.8.0-preview.2`; [mã nguồn của đợt phát hành](https://github.com/dtai52hz/lanbridge/tree/v0.7.3). Cơ chế bảo trì hook bàn phím của ứng dụng Windows 0.7.2 chưa được chuyển sang Desktop preview.
 
 | Máy | Gói |
 | --- | --- |
-| Windows 10/11 x64 | `LanBridge-Desktop-0.8.0-preview.1-win-x64.zip` |
-| Mac Apple Silicon (M1/M2/M3/M4…) | `LanBridge-Desktop-0.8.0-preview.1-osx-arm64.zip` |
-| Mac Intel | `LanBridge-Desktop-0.8.0-preview.1-osx-x64.zip` |
-| Linux X11 x64 | `LanBridge-Desktop-0.8.0-preview.1-linux-x64.tar.gz` |
-| Linux X11 ARM64 | `LanBridge-Desktop-0.8.0-preview.1-linux-arm64.tar.gz` |
+| Windows 10/11 x64 | `LanBridge-Desktop-0.8.0-preview.2-win-x64.zip` |
+| Mac Apple Silicon (M1/M2/M3/M4…) | `LanBridge-Desktop-0.8.0-preview.2-osx-arm64.zip` |
+| Mac Intel | `LanBridge-Desktop-0.8.0-preview.2-osx-x64.zip` |
+| Linux X11 x64 | `LanBridge-Desktop-0.8.0-preview.2-linux-x64.tar.gz` |
+| Linux X11 ARM64 | `LanBridge-Desktop-0.8.0-preview.2-linux-arm64.tar.gz` |
 
 Các gói chứa sẵn .NET; không cần cài runtime riêng. Giữ toàn bộ thư mục đã giải nén, gồm thư viện native. Mỗi gói có file SHA-256 bên cạnh.
 
-**Windows:** đóng LanBridge cũ trước, giải nén ZIP rồi mở `LanBridge.Desktop.exe`. Bản Windows 0.7.2 có [bộ cài EXE tại cùng trang tải](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2) và đầy đủ các tính năng Windows trước đây.
+**Windows:** đóng LanBridge cũ trước, giải nén ZIP rồi mở `LanBridge.Desktop.exe`. Bản Windows 0.7.3 có [bộ cài EXE tại cùng trang tải](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.3) và đầy đủ các tính năng Windows trước đây.
 
 **macOS 14 trở lên:** giải nén rồi kéo `.app` vào Applications. Gói dùng chữ ký ad-hoc, chưa có chữ ký Developer ID/notarization. Nếu macOS chặn lần mở đầu, mở **System Settings → Privacy & Security** và kiểm tra mục cho phép mở ứng dụng vừa tải. Cấp quyền cho LanBridge trong **Privacy & Security → Accessibility** và **Input Monitoring** nếu hệ điều hành yêu cầu, rồi mở lại/kết nối lại. Ứng dụng không tự cấp hoặc vượt các quyền này.
 
@@ -26,8 +26,8 @@ Các gói chứa sẵn .NET; không cần cài runtime riêng. Giữ toàn bộ 
 
 ```bash
 sudo apt-get install libx11-6 libxi6 libxtst6 libxt6t64 libxkbcommon0 libxinerama1 libxrandr2 libice6 libsm6 libfontconfig1
-tar -xzf LanBridge-Desktop-0.8.0-preview.1-linux-x64.tar.gz
-cd LanBridge-Desktop-0.8.0-preview.1-linux-x64
+tar -xzf LanBridge-Desktop-0.8.0-preview.2-linux-x64.tar.gz
+cd LanBridge-Desktop-0.8.0-preview.2-linux-x64
 ./LanBridge.Desktop
 ```
 
@@ -55,6 +55,7 @@ Nếu discovery bị chặn, **Chép mã máy này** trên B rồi dán vào **K
 | F9/chọn phím chuyển trong danh sách, chuyển mép, thoát khẩn cấp | Đã có; Linux có thể nhận phím kích hoạt đầu tiên ở A trước khi grab có hiệu lực |
 | Telex/VNI tích hợp và gõ Unicode | Đã có; Linux X11 có giới hạn về tốc độ/ứng dụng bên dưới |
 | Chat | Đã có |
+| Nhận điều khiển từ Android, chia sẻ màn hình cho Android | Đã có; bật quyền Xem màn hình riêng tại máy tính, mặc định tắt |
 | Clipboard chữ | Bật trên cả hai máy để chia sẻ, mặc định tắt |
 | Gửi file thủ công, SHA-256, không ghi đè | Đã có; lưu tại `~/Downloads/LanBridge` |
 | Clipboard ảnh/file tự động, âm thanh, ghi hình, màn che, restart, khay hệ thống, nhớ thiết lập | Chưa chuyển sang desktop preview; vẫn có các tính năng tương ứng trong bản Windows ổn định |
@@ -62,7 +63,13 @@ Nếu discovery bị chặn, **Chép mã máy này** trên B rồi dán vào **K
 
 Trên Mac, Command được gửi như Win/Super; Control vẫn là Control. Preview giữ phím vật lý, chưa tự đổi mọi phím tắt giữa quy ước macOS và Windows. Ví dụ điều khiển Windows từ Mac, dùng Control+C cho lệnh Ctrl+C của Windows.
 
-Linux X11 không có API nhập Unicode trực tiếp tương đương Windows/macOS. SharpHook ánh xạ keycode rồi gửi phím; độ trễ mặc định khoảng 50 ms mỗi ký tự và phụ thuộc ứng dụng nhận. Vì vậy gõ tiếng Việt nhanh có thể chậm trên B Linux. Chưa đánh đồng chất lượng này với đường nhập Windows 0.7.2. Đây là giới hạn đã biết của preview.
+Linux X11 không có API nhập Unicode trực tiếp tương đương Windows/macOS. SharpHook ánh xạ keycode rồi gửi phím; độ trễ mặc định khoảng 50 ms mỗi ký tự và phụ thuộc ứng dụng nhận. Vì vậy gõ tiếng Việt nhanh có thể chậm trên B Linux. Chưa đánh đồng chất lượng này với đường nhập Windows 0.7.3. Đây là giới hạn đã biết của preview.
+
+## Chia sẻ màn hình cho Android
+
+Kết nối điện thoại rồi bật **Xem màn hình** tại máy nhận. Điện thoại cần chọn chế độ **Xem màn hình** để bắt đầu; cấp quyền đơn thuần không tự chụp. Tắt quyền, ngắt phiên hoặc điện thoại về nền sẽ dừng chia sẻ. macOS 14+ dùng ScreenCaptureKit và hỏi quyền **Screen & System Audio Recording / Screen Recording** trong Privacy & Security khi nhận yêu cầu xem hợp lệ; nếu chưa được cấp, ứng dụng báo lỗi và dừng.
+
+Ảnh JPEG được thu nhỏ đúng tỉ lệ, tối đa 1280×800 và 512 KiB, tối đa 5 khung/giây. Tọa độ chạm áp dụng cho toàn vùng desktop mà backend điều khiển. Linux X11 giới hạn vùng nguồn 32 triệu pixel; Wayland chưa hỗ trợ. Windows/Linux chưa ghép hình con trỏ hệ điều hành; điện thoại có dấu trỏ riêng. Desktop hiện chỉ cung cấp hình cho Android; giao diện Desktop chưa có trình xem màn hình của đối tác.
 
 ## Kiểm tra và giới hạn
 

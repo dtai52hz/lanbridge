@@ -1,3 +1,10 @@
+# Android 0.1.0-preview.1 · Windows 0.7.3 · Desktop 0.8.0-preview.2
+
+- Thêm APK Android 8+ để điều khiển máy tính Windows/macOS/Linux X11 trong LAN: tìm thiết bị, xác nhận ở máy tính hoặc mã LB1, TLS ghim chứng thư, bàn rê chuột và chế độ xem màn hình/chạm trực tiếp.
+- Nhập chữ Unicode đã ghép dấu từ bàn phím điện thoại, phím đặc biệt, Ctrl/Command+C/V, bấm phải, giữ/nhả chuột và cuộn hai ngón. Về nền nhả điều khiển và dừng yêu cầu hình; chưa điều khiển Android từ máy tính.
+- Quyền Xem màn hình riêng, mặc định tắt tại máy nhận. Chụp đúng vùng desktop điều khiển bằng GDI trên Windows, ScreenCaptureKit trên macOS 14+ và X11 trên Linux. Mac yêu cầu Screen Recording. JPEG tối đa 1280×800/512 KiB/5 fps; thu hồi quyền/ngắt phiên dừng chụp, chỉ một lần chụp/gửi chờ xử lý.
+- Thêm kiểm tra Android giả lập giao diện, TLS Java/.NET thật trên loopback, vòng đời/chuyển thế hệ chia sẻ và thu hồi quyền. CI kiểm tra năm nền tảng Desktop và Android. Chưa suy ra đã thử vật lý đủ mọi loại điện thoại/máy tính.
+
 # 0.7.2 — Khôi phục kênh gõ khi dùng lâu
 
 - Làm mới kênh bắt bàn phím riêng trên A khi bắt đầu điều khiển và bảo trì ở lúc nhả hết phím/nút. Giữ từ đang ghép, phiên TLS, quyền và thứ tự đầu vào; không đặt lại trạng thái phím theo thời gian.

@@ -15,6 +15,8 @@ on:
       - 'src/FileTransfer.cs'
       - 'src/VietnameseInput.cs'
       - 'src/SwitchShortcut.cs'
+      - 'src/ScreenStreaming.cs'
+      - 'tests/ScreenStreamingSmoke/**'
       - 'scripts/build-desktop.ps1'
       - '.github/workflows/desktop.yml'
 permissions:
@@ -63,7 +65,7 @@ jobs:
       - name: Published application smoke
         shell: pwsh
         run: |
-          $package = 'release/LanBridge-Desktop-0.8.0-preview.1-${{ matrix.rid }}'
+          $package = 'release/LanBridge-Desktop-0.8.0-preview.2-${{ matrix.rid }}'
           $executable = if ($IsWindows) { "$package/LanBridge.Desktop.exe" } elseif ($IsMacOS) { "$package.app/Contents/MacOS/LanBridge.Desktop" } else { "$package/LanBridge.Desktop" }
           if ($IsWindows) {
             $desktopSmoke = Start-Process -FilePath (Resolve-Path $executable) -ArgumentList '--smoke' -Wait -PassThru -WindowStyle Hidden

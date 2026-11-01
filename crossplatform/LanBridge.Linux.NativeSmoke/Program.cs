@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text;
 using LanBridge;
 using LanBridge.CrossPlatform;
+using SkiaSharp;
 
 // This program deliberately installs native capture and emits input. It must never run on the
 // user's desktop. The workflow creates a dedicated Xvfb :99 with no external client or user input.
@@ -39,6 +40,21 @@ backend.Input += _ => { Interlocked.Increment(ref physical); return false; };
 backend.Start();
 Check(backend.Capabilities.Capture && backend.Capabilities.Inject, "X11 backend exposes native capture and injection after startup");
 Check(backend.Bounds.Width > 1 && backend.Bounds.Height > 1, "X11 desktop bounds are read");
+
+// Capture only this workflow's synthetic Xvfb screen, which the guard above isolates from user desktops.
+var screen = DesktopScreenCapture.Create(() => backend.Bounds).CaptureAsync(CancellationToken.None).GetAwaiter().GetResult();
+Check(screen.Width == 1280 && screen.Height == 720 && screen.Jpeg.Length <= 512 * 1024,
+    "Native X11 screenshot has bounded dimensions and JPEG size");
+using (var decoded = SKBitmap.Decode(screen.Jpeg))
+{
+    Check(decoded != null && decoded.Width == 1280 && decoded.Height == 720, "Native X11 JPEG decodes");
+    var windowPixel = decoded!.GetPixel(400, 300);
+    Check(windowPixel.Red > 230 && windowPixel.Green < 25 && windowPixel.Blue < 25,
+        "XImage byte order, native masks and JPEG encoding preserve synthetic red window pixels");
+    var desktopPixel = decoded.GetPixel(1200, 710);
+    Check(desktopPixel.Red < 25 && desktopPixel.Green < 25 && desktopPixel.Blue < 25,
+        "Screenshot matches the full input desktop rather than just the test window");
+}
 
 backend.Inject(new() { Type = "enter", X = 32768, Y = 32768 });
 Wait(() => window.MotionCount > 0, "Normalized receiver movement reaches the isolated window");
@@ -140,7 +156,7 @@ sealed class IsolatedWindow : IDisposable
             _display = Native.XOpenDisplay(0);
             if (_display == 0) throw new InvalidOperationException("Could not open isolated Xvfb display.");
             nuint root = Native.XDefaultRootWindow(_display);
-            _window = Native.XCreateSimpleWindow(_display, root, 0, 0, 1000, 700, 0, 0, 0);
+            _window = Native.XCreateSimpleWindow(_display, root, 0, 0, 1000, 700, 0, 0, 0x00ff0000);
             Native.XSelectInput(_display, _window, (nint)((1 << 0) | (1 << 1) | (1 << 2) | (1 << 3) | (1 << 6)));
             Native.XMapWindow(_display, _window);
             Native.XSetInputFocus(_display, _window, 0, 0);

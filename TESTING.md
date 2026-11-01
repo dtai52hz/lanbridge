@@ -2,9 +2,17 @@
 
 Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10 SDK trên Windows.
 
-## Desktop đa nền tảng 0.8.0-preview.1
+## Android và chia sẻ màn hình
 
-Chạy `pwsh -File scripts/build-desktop.ps1 -Task Test` bằng .NET 10 SDK. Bộ này không cài hook, phát phím/chuột hoặc đọc/ghi clipboard thật: Platform.Smoke (475 assertions), Linux.Smoke (192), CrossPlatformSmoke (278), Desktop.Smoke (284), cùng TextInputSmoke, FileSmoke và TransportSmoke dùng chung.
+`pwsh -File scripts/build-android.ps1 -Task Test` chạy 13 bài JUnit giao thức/TLS và 11 bài Robolectric View/bố cục giả, rồi Android lint. `pwsh -File scripts/test-android-interop.ps1` dùng Java client thật với `HostServer`/`PeerConnection` C# thật, chỉ bind loopback: thử LBC1 xác nhận, LB1 bí mật sau pin TLS, Unicode/emoji/dấu câu, enter/move/button/key, khung hình giả Base64 và thu hồi quyền. Không mở cổng LAN, cài hook, dùng clipboard hoặc chụp màn hình thật.
+
+`ScreenStreamingSmoke` (110 assertions) thử mặc định từ chối, cấp quyền/yêu cầu rõ ràng, lỗi chụp đồng bộ, chuyển thế hệ khi native capture không hủy được, giới hạn JPEG, thứ tự thông báo, tối đa một lần chụp/gửi và dispose không chờ. `SessionSmoke` Windows (600 assertions) có thêm fake capture qua TLS với form ẩn: hello capability, quyền tại thời điểm nhận/hiện tại, thu hồi/cấp lại, màn che, phím thoát khẩn cấp và ngắt phiên. Tất cả ảnh đều tổng hợp.
+
+Robolectric chạy SDK 28 giả trên JVM; không phải emulator/phần cứng Android. Chưa xác nhận đầu vào, bàn phím IME, quyền Screen Recording và hiển thị trên đủ cặp điện thoại/Windows/Mac/Linux thật. Windows/Linux chưa ghép con trỏ OS vào ảnh. Xem [giới hạn Android](android/README.md).
+
+## Desktop đa nền tảng 0.8.0-preview.2
+
+Chạy `pwsh -File scripts/build-desktop.ps1 -Task Test` bằng .NET 10 SDK. Bộ này không cài hook, phát phím/chuột hoặc đọc/ghi clipboard thật: Platform.Smoke (484 assertions, thêm một kiểm tra bố trí ảnh native giả trên Mac), Linux.Smoke (192), CrossPlatformSmoke (278), Desktop.Smoke (310), cùng TextInputSmoke, FileSmoke, TransportSmoke và ScreenStreamingSmoke dùng chung.
 
 Chín cặp Windows/macOS/Linux trong Desktop.Smoke là nhãn của backend giả qua TLS localhost thật. Các kiểm tra bao phủ đồng ý kết nối, hello/quyền đúng thứ tự, từ chối gói sai, Telex/Unicode, chuyển máy, chuột, clipboard giả, SHA-256 của file và nhả đầu vào khi ngắt. Không suy ra đã thử vật lý đủ chín cặp máy.
 
@@ -12,7 +20,7 @@ Workflow `Desktop platforms` chạy trên Windows x64, macOS Intel/ARM64 và Ubu
 
 macOS native cần thử trên máy Mac đã cấp Accessibility/Input Monitoring; Linux Wayland chưa hỗ trợ. Xem [hướng dẫn và giới hạn desktop preview](crossplatform/README.md).
 
-## Bộ cài Windows 0.7.2
+## Bộ cài Windows 0.7.3
 
 ```powershell
 pwsh -File scripts/setup-installer-tools.ps1
@@ -24,7 +32,7 @@ Phép thử installer dùng một thư mục mới bên trong `.tools`, truyền
 
 Kiểm tra trước/sau bao gồm registry uninstall, shortcut và thiết lập thật, các tiến trình LanBridge đã mở và file dữ liệu nằm ngoài thư mục cài. Không khởi chạy hook, mạng, clipboard thật hoặc thay bản đang dùng. Phép thử này xác minh chép file, chạy preview và gỡ file; đăng ký Installed apps/shortcut của chế độ cài bình thường cần thử thủ công trên Windows.
 
-Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.2.
+Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.3.
 
 ## Hồi quy gõ lâu 0.7.2
 

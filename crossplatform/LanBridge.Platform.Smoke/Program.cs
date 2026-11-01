@@ -2,6 +2,7 @@ using LanBridge;
 using LanBridge.CrossPlatform;
 using SharpHook.Data;
 using System.Diagnostics;
+using System.Runtime.InteropServices;
 
 int assertions = 0;
 void Check(bool condition, string description)
@@ -16,6 +17,20 @@ void Map(KeyCode physical, int key, int scan, bool extended = false)
     Check(CanonicalKeyMap.IsExtended(physical) == extended, $"Extended flag: {physical}");
     Check(CanonicalKeyMap.ToSharpHookKeyCode(key, scan, extended) == physical, $"Round-trip physical key: {physical}");
 }
+
+// Screen geometry and native color masks are tested without opening a display or capturing pixels.
+Check(DesktopScreenCapture.Fit(new(-1920, 0, 3840, 1080)) == (1280, 360), "Virtual desktop aspect ratio retained");
+Check(DesktopScreenCapture.Fit(new(0, 0, 1080, 1920)) == (450, 800), "Portrait desktop fits phone image bounds");
+Check(DesktopScreenCapture.Fit(new(0, 0, 800, 600)) == (800, 600), "Small desktop is not enlarged");
+Check(DesktopScreenCapture.Component(0xf800, 0xf800) == 255, "RGB565 full red mask");
+Check(DesktopScreenCapture.Component(0x07e0, 0x07e0) == 255, "RGB565 full green mask");
+Check(DesktopScreenCapture.Component(0x001f, 0x001f) == 255, "RGB565 full blue mask");
+Check(DesktopScreenCapture.Component(0x00800000, 0x00ff0000) == 128, "32-bit TrueColor red channel");
+Check(DesktopScreenCapture.Component(0xffffffff, 0) == 0, "Missing X11 mask is harmless");
+var inertCapture = DesktopScreenCapture.Create(() => throw new InvalidOperationException("Must remain inert"));
+Check(inertCapture != null, "Constructing a capture provider does not inspect or request access to the desktop");
+if (OperatingSystem.IsMacOS())
+    Check(MacScreenLayoutSmoke.Check() == 0, "ScreenCaptureKit helper preserves synthetic BGRA row order and negative monitor offsets without capturing a desktop");
 
 int[] letterScans = [0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26,
     0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C];
@@ -162,3 +177,9 @@ using (var backend = new SharpHookInputBackend())
     Check(disposed, "Disposed backend cannot install hooks");
 }
 Console.WriteLine($"Platform smoke passed: {assertions} assertions; no native hooks or input installed.");
+
+static class MacScreenLayoutSmoke
+{
+    [DllImport("LanBridge.ScreenCapture", EntryPoint = "lanbridge_capture_layout_smoke")]
+    internal static extern int Check();
+}

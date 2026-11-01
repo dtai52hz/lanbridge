@@ -9,13 +9,19 @@ internal sealed class PortablePeerSession : IDisposable
     readonly PeerConnection _peer;
     readonly PortableInputRouter _input;
     readonly CancellationTokenSource _stop = new();
-    readonly Channel<(Packet Packet, long Bytes, long FileEpoch, long ClipboardEpoch)> _incoming = Channel.CreateBounded<(Packet, long, long, long)>(512);
+    readonly Channel<(Packet Packet, long Bytes, long FileEpoch, long ClipboardEpoch, long ScreenEpoch, bool ScreenGranted)> _incoming
+        = Channel.CreateBounded<(Packet, long, long, long, long, bool)>(512);
     readonly Channel<(Packet Packet, long FileEpoch, long ClipboardEpoch)> _background = Channel.CreateBounded<(Packet, long, long)>(128);
     readonly Action<Packet> _sender;
     readonly FileTransfer _files;
+    readonly ScreenStreamingSession? _screen;
+    readonly object _screenPermissionGate = new();
     Permissions _local, _remote = new() { Input = false, Clipboard = false, Files = false };
     volatile bool _hello;
-    long _fileEpoch, _clipboardEpoch, _pendingBytes;
+    int _remoteScreenVersion;
+    volatile bool _screenActive;
+    string? _screenError;
+    long _fileEpoch, _clipboardEpoch, _pendingBytes, _screenEpoch;
     int _disposed;
 
     public bool IsHost { get; }
@@ -23,16 +29,31 @@ internal sealed class PortablePeerSession : IDisposable
     public bool InputAllowed => Connected && _hello && (IsHost ? Volatile.Read(ref _local).Input : Volatile.Read(ref _remote).Input);
     public bool ClipboardAllowed => Connected && _hello && Volatile.Read(ref _local).Clipboard && (IsHost || Volatile.Read(ref _remote).Clipboard);
     public bool FilesAllowed => Connected && _hello && (IsHost ? Volatile.Read(ref _local).Files : Volatile.Read(ref _remote).Files);
+    public bool ScreenViewingActive => Connected && _screenActive;
+    public string? ScreenViewingError => Volatile.Read(ref _screenError);
     public event Action<string>? Log;
     public event Action? Changed;
     public event Action? Closed;
     public Func<string, Task>? SetClipboardText { get; set; }
 
-    public PortablePeerSession(PeerConnection peer, PortableInputRouter input, bool host, Permissions local, string receiveDirectory)
+    public PortablePeerSession(PeerConnection peer, PortableInputRouter input, bool host, Permissions local, string receiveDirectory,
+        IScreenCapture? screenCapture = null)
     {
         _peer = peer; _input = input; IsHost = host; _local = local with { };
         _sender = packet => { if (Connected) peer.TrySend(packet); };
         _files = new FileTransfer(receiveDirectory, packet => peer.SendAsync(packet, _stop.Token), text => Log?.Invoke(text));
+        if (host && screenCapture != null)
+        {
+            _screen = new ScreenStreamingSession(peer, screenCapture.CaptureAsync);
+            _screen.Error += message => { Volatile.Write(ref _screenError, message); Log?.Invoke("Xem màn hình: " + message); Changed?.Invoke(); };
+            _screen.StateChanged += active =>
+            {
+                _screenActive = active;
+                if (active) Volatile.Write(ref _screenError, null);
+                Log?.Invoke(active ? "Đang chia sẻ hình ảnh màn hình với thiết bị điều khiển." : "Đã dừng chia sẻ hình ảnh màn hình.");
+                Changed?.Invoke();
+            };
+        }
     }
 
     public void Start(DesktopBounds bounds, string name)
@@ -44,7 +65,8 @@ internal sealed class PortablePeerSession : IDisposable
         _peer.Closed += PeerClosed;
         _ = Task.Run(ProcessIncomingAsync);
         _ = Task.Run(ProcessBackgroundAsync);
-        _peer.TrySend(new Packet { Type = "hello", Name = name, Width = bounds.Width, Height = bounds.Height, Flags = 2 });
+        _peer.TrySend(new Packet { Type = "hello", Name = name, Width = bounds.Width, Height = bounds.Height, Flags = 2,
+            ScreenViewingVersion = _screen != null ? 1 : 0 });
         if (IsHost) _peer.TrySend(new Packet { Type = "permissions", Permissions = _local with { } });
         _peer.Start();
     }
@@ -52,10 +74,20 @@ internal sealed class PortablePeerSession : IDisposable
     public void SetLocalPermissions(Permissions permissions)
     {
         if (!Connected) return;
-        var previous = Volatile.Read(ref _local);
-        if (previous.Files != permissions.Files) Interlocked.Increment(ref _fileEpoch);
-        if (previous.Clipboard != permissions.Clipboard) Interlocked.Increment(ref _clipboardEpoch);
-        Volatile.Write(ref _local, permissions with { });
+        lock (_screenPermissionGate)
+        {
+            if (!Connected) return;
+            var previous = Volatile.Read(ref _local);
+            if (previous.Files != permissions.Files) Interlocked.Increment(ref _fileEpoch);
+            if (previous.Clipboard != permissions.Clipboard) Interlocked.Increment(ref _clipboardEpoch);
+            if (previous.ScreenViewing != permissions.ScreenViewing)
+            {
+                ++_screenEpoch;
+                Volatile.Write(ref _screenError, null);
+            }
+            Volatile.Write(ref _local, permissions with { });
+            _screen?.SetPermission(IsHost && _hello && _remoteScreenVersion == 1 && permissions.ScreenViewing);
+        }
         _input.ConfigureSession(_sender, InputAllowed);
         if (!permissions.Files) _files.CancelTransfers();
         if (IsHost && Connected) _peer.TrySend(new Packet { Type = "permissions", Permissions = permissions with { } });
@@ -92,8 +124,15 @@ internal sealed class PortablePeerSession : IDisposable
         long bytes = 512L + ((long)packet.Type.Length + (packet.Text?.Length ?? 0) + (packet.Name?.Length ?? 0)
             + (packet.Id?.Length ?? 0) + (packet.Button?.Length ?? 0) + (packet.BatchId?.Length ?? 0)) * 2L
             + (packet.Data?.Length ?? 0);
+        long screenEpoch;
+        bool screenGranted;
+        lock (_screenPermissionGate)
+        {
+            screenEpoch = _screenEpoch;
+            screenGranted = Volatile.Read(ref _local).ScreenViewing;
+        }
         if (Interlocked.Add(ref _pendingBytes, bytes) > 8 * 1024 * 1024 || !_incoming.Writer.TryWrite((packet, bytes,
-                Interlocked.Read(ref _fileEpoch), Interlocked.Read(ref _clipboardEpoch))))
+                Interlocked.Read(ref _fileEpoch), Interlocked.Read(ref _clipboardEpoch), screenEpoch, screenGranted)))
         { Interlocked.Add(ref _pendingBytes, -bytes); Dispose(); }
     }
 
@@ -110,11 +149,32 @@ internal sealed class PortablePeerSession : IDisposable
                 {
                     if (_hello || packet.Flags != 2 || packet.Width is < 2 or > 65536 || packet.Height is < 2 or > 65536)
                         throw new IOException("Máy bên kia cần LanBridge hỗ trợ gõ Unicode (Windows 0.2.0 trở lên).");
-                    _hello = true;
+                    lock (_screenPermissionGate)
+                    {
+                        _hello = true;
+                        _remoteScreenVersion = packet.ScreenViewingVersion;
+                        _screen?.SetPermission(IsHost && _remoteScreenVersion == 1 && Volatile.Read(ref _local).ScreenViewing);
+                    }
                     if (!_input.ConfigureSession(_sender, InputAllowed, packet.Width, packet.Height)) break;
                     Log?.Invoke("Đối tác: " + packet.Name); Changed?.Invoke();
                 }
                 else if (!_hello) throw new IOException("Máy bên kia gửi dữ liệu trước khi khai báo giao thức.");
+                else if (packet.Type == "screen-request")
+                {
+                    // Fence a queued enable request to the permission generation in which it arrived.
+                    // A later grant cannot revive requests received before consent or before a revoke.
+                    // Capture/encoding/writes themselves run on the dedicated screen worker.
+                    lock (_screenPermissionGate)
+                    {
+                        if (!Connected) break;
+                        if (IsHost && _screen != null && !packet.Allow) _screen.Handle(packet);
+                        else if (IsHost && _remoteScreenVersion == 1 && _screen != null && queued.ScreenGranted
+                            && queued.ScreenEpoch == _screenEpoch && Volatile.Read(ref _local).ScreenViewing)
+                            _screen.Handle(packet);
+                        else _peer.TrySend(new Packet { Type = "screen-state", Allow = false,
+                            Text = "Yêu cầu xem màn hình chưa có quyền hoặc đã hết hiệu lực; hãy yêu cầu lại sau khi được cấp quyền." });
+                    }
+                }
                 else if (packet.Type == "permissions" && !IsHost && packet.Permissions is { } permissions)
                 {
                     var previous = Volatile.Read(ref _remote);
@@ -175,6 +235,7 @@ internal sealed class PortablePeerSession : IDisposable
         if (Interlocked.Exchange(ref _disposed, 1) != 0) return;
         _peer.Received -= Receive; _peer.Closed -= PeerClosed;
         _stop.Cancel(); _incoming.Writer.TryComplete(); _background.Writer.TryComplete();
+        lock (_screenPermissionGate) { _screen?.Dispose(); _screenActive = false; }
         _input.ReleaseSession(_sender);
         _files.Dispose(); _peer.Dispose();
         Closed?.Invoke();

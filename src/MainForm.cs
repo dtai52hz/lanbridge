@@ -29,8 +29,11 @@ public sealed partial class MainForm : Form
     CancellationTokenSource? _session;
     SessionInbox? _inbox;
     FileTransfer? _files;
+    ScreenStreamingSession? _screenStreaming;
+    readonly Func<CancellationToken, Task<ScreenFrame>> _captureScreen;
+    volatile bool _screenViewingCapable;
     string _lastClipboard = "", _recordingPath = "";
-    bool _syncChecks, _closing, _audioOn, _recordingOn, _blockingOn, _privacyOn, _connecting;
+    bool _syncChecks, _closing, _audioOn, _recordingOn, _blockingOn, _privacyOn, _screenViewingOn, _connecting;
     volatile bool _helloReceived, _sessionIsHost;
     volatile Permissions _sessionPermissions = new();
     readonly object _permissionStateGate = new();
@@ -39,9 +42,13 @@ public sealed partial class MainForm : Form
     readonly string _receivedDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LanBridge");
     readonly string _recordingDirectory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.MyVideos), "LanBridge");
 
-    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null, string? receivedDirectory = null, string? preferencesPath = null)
+    public MainForm(bool preview = false, IClipboardAccess? clipboard = null, string? clipboardCacheDirectory = null, string? receivedDirectory = null, string? preferencesPath = null,
+        Func<CancellationToken, Task<ScreenFrame>>? screenCapture = null)
     {
         _preview = preview;
+        _captureScreen = screenCapture ?? (preview
+            ? _ => Task.FromException<ScreenFrame>(new InvalidOperationException("Chế độ xem giao diện không chụp màn hình."))
+            : WindowsScreenCapture.CaptureAsync);
         _preferencesStore = !preview || preferencesPath != null ? new UserPreferencesStore(preferencesPath) : null;
         if (receivedDirectory != null) _receivedDirectory = Path.GetFullPath(receivedDirectory);
         _clipboard = clipboard ?? new WindowsClipboardAccess();
@@ -52,7 +59,7 @@ public sealed partial class MainForm : Form
         BuildUi();
         InitializeDesktopExperience();
         _input.RemoteControlChanged = remote => Ui(() => { _remoteState.Text = remote ? "ĐANG ĐIỀU KHIỂN MÁY B" : (_peer != null ? "CHUỘT ĐANG Ở MÁY A" : "CHƯA CÓ PHIÊN KẾT NỐI"); _remoteState.ForeColor = remote ? Accent : Muted; if (remote && _input.LastError is { } error) { Log(error); Emergency(); } });
-        _input.EmergencyReleased = () => { Interlocked.Increment(ref _featuresPermissionEpoch); Ui(Emergency); };
+        _input.EmergencyReleased = () => { Interlocked.Increment(ref _featuresPermissionEpoch); _screenStreaming?.SetPermission(false); Ui(Emergency); };
         _audio.Error = message => Ui(() => { _audio.StopCapture(); _audio.StopPlayback(); Log("Âm thanh: " + message); _audioOn = false; UpdateFeatureButtons(); if (IsHost) Send(new Packet { Type = "feature-state", Name = "audio", Allow = false }); });
         _recorder.Error = message => Ui(() => { Log("Ghi hình: " + message); _recordingOn = false; UpdateFeatureButtons(); Send(new Packet { Type = "feature-state", Name = "recording", Allow = false }); });
         _clipboardTimer.Tick += (_, _) => SyncClipboard(); _clipboardTimer.Start();
@@ -116,6 +123,20 @@ public sealed partial class MainForm : Form
         _peer = peer; _helloReceived = false; _sessionIsHost = IsHost; bool sessionIsHost = IsHost; _session = new(); var session = _session; var token = session.Token;
         _connectionStartedAt = Stopwatch.GetTimestamp(); _connectedMachineName = null; RefreshDesktopStatus();
         _inputDiagnosticsCapable = false;
+        _screenViewingCapable = false;
+        var screenStreaming = sessionIsHost ? new ScreenStreamingSession(peer, _captureScreen) : null;
+        _screenStreaming = screenStreaming;
+        if (screenStreaming != null)
+        {
+            screenStreaming.Error += message => Ui(() => { if (_peer == peer && !token.IsCancellationRequested) Log("Xem màn hình: " + message); });
+            screenStreaming.StateChanged += active => Ui(() =>
+            {
+                if (_peer != peer || token.IsCancellationRequested) return;
+                _screenViewingOn = active;
+                UpdateFeatureButtons();
+                Log(active ? "Đang chia sẻ màn hình với thiết bị đã ghép nối. Tắt quyền Xem màn hình để dừng." : "Đã dừng chia sẻ màn hình.");
+            });
+        }
         var inputLatency = new InputLatencySampler(); _inputLatency = inputLatency;
         Action<Packet> inputSender = packet => peer.TrySend(!sessionIsHost && _inputDiagnosticsCapable ? inputLatency.Stamp(packet) : packet);
         _input.Send = inputSender; _audio.Send = packet => peer.TrySend(packet);
@@ -147,6 +168,7 @@ public sealed partial class MainForm : Form
             sessionFiles?.Dispose();
             sessionClipboardFiles?.Dispose();
             sessionClipboardImages?.Dispose();
+            screenStreaming?.Dispose();
             // Release on the input pump even while the main window is busy/minimized.
             // Sender identity is checked on that pump to ignore stale close callbacks.
             _input.ReleaseSession(inputSender);
@@ -175,7 +197,7 @@ public sealed partial class MainForm : Form
                     {
                         if (token.IsCancellationRequested) return;
                         if (BackgroundPacketIsCurrent(item))
-                            await HandlePacket(item, token, sessionFiles, sessionClipboardFiles, sessionClipboardImages);
+                            await HandlePacket(item, token, sessionFiles, sessionClipboardFiles, sessionClipboardImages, screenStreaming);
                     }
             }
             catch (OperationCanceledException) { }
@@ -193,7 +215,7 @@ public sealed partial class MainForm : Form
                         {
                             var item = batch[index++];
                             if (IsInputBarrier(item.Packet))
-                                await HandlePacket(item, token, sessionFiles, sessionClipboardFiles, sessionClipboardImages);
+                                await HandlePacket(item, token, sessionFiles, sessionClipboardFiles, sessionClipboardImages, screenStreaming);
                             else
                             {
                                 // A receives the authority's permission snapshots in this same
@@ -216,7 +238,7 @@ public sealed partial class MainForm : Form
             catch (Exception ex) { peer.Abort("Xử lý phiên: " + ex.Message); }
         }, token);
         var bounds = SystemInformation.VirtualScreen;
-        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion, ClipboardImagesVersion = ClipboardImages.ProtocolVersion, InputDiagnosticsVersion = 1 });
+        Send(new Packet { Type = "hello", Name = Environment.MachineName, Width = bounds.Width, Height = bounds.Height, Flags = 2, ClipboardFilesVersion = sessionClipboardFiles == null ? 0 : ClipboardFiles.ProtocolVersion, ClipboardImagesVersion = ClipboardImages.ProtocolVersion, InputDiagnosticsVersion = 1, ScreenViewingVersion = 1 });
         if (IsHost) Send(new Packet { Type = "permissions", Permissions = _permissions with { } });
         ApplyPermissions(); _remoteState.Text = IsHost ? "MÁY B SẴN SÀNG NHẬN ĐIỀU KHIỂN" : "CHUỘT ĐANG Ở MÁY A";
         _devicesPage.SetSessionState(true); _devicesPage.Connecting = false; _tabs.SelectedTab = _sessionTab;
@@ -231,10 +253,22 @@ public sealed partial class MainForm : Form
             Interlocked.Read(ref _audioPermissionEpoch), Interlocked.Read(ref _featuresPermissionEpoch));
     }
 
-    async Task HandlePacket(SessionPacket item, CancellationToken token, FileTransfer? files, ClipboardFiles? clipboardFiles, ClipboardImages? clipboardImages)
+    async Task HandlePacket(SessionPacket item, CancellationToken token, FileTransfer? files, ClipboardFiles? clipboardFiles, ClipboardImages? clipboardImages, ScreenStreamingSession? screenStreaming)
     {
         var p = item.Packet;
         if (token.IsCancellationRequested) return;
+        if (p.Type == "screen-request")
+        {
+            if (_sessionIsHost && _helloReceived && _screenViewingCapable && screenStreaming != null)
+            {
+                // The arrival grant and current epoch must both authorize ON. An OFF
+                // request always remains effective, including after a local revocation.
+                bool allowed = !p.Allow || (item.Permissions?.ScreenViewing == true && _sessionPermissions.ScreenViewing
+                    && BackgroundPacketIsCurrent(item));
+                screenStreaming.Handle(allowed ? p : p with { Allow = false });
+            }
+            return;
+        }
         if (p.Type.StartsWith("clipboard-image-", StringComparison.Ordinal))
         {
             if (clipboardImages != null) await clipboardImages.HandleAsync(p, _helloReceived && _clipboardImagesCapable && item.Permissions?.Clipboard == true && _sessionPermissions.Clipboard);
@@ -282,6 +316,7 @@ public sealed partial class MainForm : Form
                     _clipboardFilesCapable = p.ClipboardFilesVersion == 1;
                     _clipboardImagesCapable = p.ClipboardImagesVersion == ClipboardImages.ProtocolVersion;
                     _inputDiagnosticsCapable = p.InputDiagnosticsVersion == 1;
+                    _screenViewingCapable = p.ScreenViewingVersion == 1;
                     _helloReceived = true; _devicesPage.SetSessionState(true, p.Name); ApplyPermissions(); break;
                 case "permissions" when !IsHost && p.Permissions != null: _permissions = p.Permissions; ApplyPermissions(); break;
                 case "clipboard" when item.Permissions?.Clipboard == true: ReceiveClipboardText(p, token); break;
@@ -300,7 +335,7 @@ public sealed partial class MainForm : Form
         // An old enable/restart must not survive an emergency or revocation. An
         // OFF request remains safe and necessary: dropping it could keep audio
         // capture or recording active merely because another permission changed.
-        bool feature = type == "restart" || (type == "feature" && item.Packet.Allow);
+        bool feature = type == "restart" || (type is "feature" or "screen-request" && item.Packet.Allow);
         return (!files || item.FilesEpoch == Interlocked.Read(ref _filesPermissionEpoch))
             && (!clipboard || item.ClipboardEpoch == Interlocked.Read(ref _clipboardPermissionEpoch))
             && (!audio || item.AudioEpoch == Interlocked.Read(ref _audioPermissionEpoch))
@@ -356,7 +391,8 @@ public sealed partial class MainForm : Form
             if (previous.Audio && !_permissions.Audio) Interlocked.Increment(ref _audioPermissionEpoch);
             if ((previous.Audio && !_permissions.Audio) || (previous.Recording && !_permissions.Recording)
                 || (previous.BlockInput && !_permissions.BlockInput) || (previous.Input && !_permissions.Input)
-                || (previous.Privacy && !_permissions.Privacy) || (previous.Restart && !_permissions.Restart))
+                || (previous.Privacy && !_permissions.Privacy) || (previous.Restart && !_permissions.Restart)
+                || (previous.ScreenViewing && !_permissions.ScreenViewing))
                 Interlocked.Increment(ref _featuresPermissionEpoch);
             _sessionPermissions = _permissions with { };
         }
@@ -372,6 +408,7 @@ public sealed partial class MainForm : Form
             if (!_permissions.Recording) { _recorder.Stop(); _recordingOn = false; }
             if (!_permissions.BlockInput || !_permissions.Input) { _input.SetBlockLocalInput(false); _blockingOn = false; }
             if (!_permissions.Privacy) { _curtain.Hide(); _privacyOn = false; }
+            UpdateScreenViewingPermission();
         }
         else { _input.ConfigureController(_peer != null && _helloReceived && _permissions.Input, (ScreenEdge)_edge.SelectedIndex); if (!_permissions.Audio) { _audio.StopPlayback(); _audioOn = false; } }
         for (int i = 0; i < _actions.Controls.Count; i++)
@@ -392,8 +429,9 @@ public sealed partial class MainForm : Form
         _actions.Controls[2].Text = _recordingOn ? "Dừng ghi" : "Ghi hình";
         _actions.Controls[3].Text = _blockingOn ? "Mở khóa B" : "Khóa B";
         _actions.Controls[4].Text = _privacyOn ? "Bỏ màn che" : "Màn che";
-        _featureStatus.ForeColor = _recordingOn ? Color.FromArgb(255, 119, 133) : Muted;
+        _featureStatus.ForeColor = _recordingOn ? Color.FromArgb(255, 119, 133) : _screenViewingOn ? Accent : Muted;
         _featureStatus.Text = _recordingOn && IsHost ? "● ĐANG GHI · " + _recordingPath :
+            _screenViewingOn ? "● ĐANG CHIA SẺ MÀN HÌNH · Tắt quyền Xem màn hình để dừng." :
             $"Âm thanh: {(_audioOn ? "bật" : "tắt")}   ·   Ghi hình: {(_recordingOn ? "bật" : "tắt")}   ·   Khóa B: {(_blockingOn ? "bật" : "tắt")}   ·   Màn che: {(_privacyOn ? "bật" : "tắt")}";
     }
 
@@ -419,7 +457,15 @@ public sealed partial class MainForm : Form
                     if (enabled) { Directory.CreateDirectory(_recordingDirectory); _recordingPath = Path.Combine(_recordingDirectory, $"LanBridge-{DateTime.Now:yyyyMMdd-HHmmss}-{Guid.NewGuid().ToString("N")[..6]}.avi"); _recorder.Start(_recordingPath); detail = "Lưu trên máy B: " + _recordingPath; } else _recorder.Stop(); _recordingOn = enabled; break;
                 case "block": _input.SetBlockLocalInput(enabled); _blockingOn = enabled; break;
                 case "privacy":
-                    if (enabled) { _recorder.Stop(); _recordingOn = false; Send(new Packet { Type = "feature-state", Name = "recording", Allow = false, Text = "Đã dừng vì màn che bật." }); _curtain.Show(); } else _curtain.Hide(); _privacyOn = enabled;
+                    if (enabled)
+                    {
+                        Interlocked.Increment(ref _featuresPermissionEpoch);
+                        _screenStreaming?.SetPermission(false);
+                        _recorder.Stop(); _recordingOn = false; Send(new Packet { Type = "feature-state", Name = "recording", Allow = false, Text = "Đã dừng vì màn che bật." }); _curtain.Show();
+                    }
+                    else _curtain.Hide();
+                    _privacyOn = enabled;
+                    UpdateScreenViewingPermission();
                     detail = "Màn che phần mềm trên B; không phải chế độ tắt màn hình bằng driver."; break;
                 default: return;
             }
@@ -449,7 +495,7 @@ public sealed partial class MainForm : Form
     {
         Interlocked.Increment(ref _featuresPermissionEpoch);
         _input.ReleaseRemote(); _input.ForceReleaseAll(); _input.SetBlockLocalInput(false); _curtain.Hide(); _blockingOn = _privacyOn = false;
-        if (IsHost) { _permissions.Input = false; ApplyPermissions(); Send(new Packet { Type = "permissions", Permissions = _permissions with { } }); Send(new Packet { Type = "feature-state", Name = "block", Allow = false }); Send(new Packet { Type = "feature-state", Name = "privacy", Allow = false }); }
+        if (IsHost) { _permissions.Input = false; _permissions.ScreenViewing = false; ApplyPermissions(); Send(new Packet { Type = "permissions", Permissions = _permissions with { } }); Send(new Packet { Type = "feature-state", Name = "block", Allow = false }); Send(new Packet { Type = "feature-state", Name = "privacy", Allow = false }); }
         Log("Đã trả điều khiển, mở khóa đầu vào và bỏ màn che." + (IsHost ? " Bật lại quyền Chuột / phím trên B để tiếp tục." : ""));
         UpdateFeatureButtons();
     }
@@ -457,11 +503,16 @@ public sealed partial class MainForm : Form
     void WindowsSessionChanged(object sender, Microsoft.Win32.SessionSwitchEventArgs e)
     {
         if (e.Reason is Microsoft.Win32.SessionSwitchReason.SessionLock or Microsoft.Win32.SessionSwitchReason.RemoteDisconnect or Microsoft.Win32.SessionSwitchReason.ConsoleDisconnect)
+        {
+            Interlocked.Increment(ref _featuresPermissionEpoch);
+            _screenStreaming?.SetPermission(false);
             Ui(() => { if (_peer != null) { Emergency(); Log("Đã dừng điều khiển vì phiên Windows bị khóa hoặc ngắt."); } });
+        }
     }
     void Disconnect()
     {
         _inputLatency?.Stop(); _inputLatency = null; _inputDiagnosticsCapable = false;
+        _screenStreaming?.Dispose(); _screenStreaming = null; _screenViewingCapable = false;
         var peer = _peer; _peer = null; _helloReceived = false; _session?.Cancel(); _inbox?.Complete(); _inbox = null;
         _connectionStartedAt = 0; _connectedMachineName = null; RefreshDesktopStatus();
         CancelClipboardTransfers(); _clipboardFiles?.Dispose(); _clipboardFiles = null; _clipboardFilesCapable = false;
@@ -469,13 +520,16 @@ public sealed partial class MainForm : Form
         _input.ReleaseRemote(false); _input.ForceReleaseAll(); _input.CanControl = false; _input.SetBlockLocalInput(false); _input.Send = null;
         _audio.StopCapture(); _audio.StopPlayback(); _recorder.Stop(); _curtain.Hide();
         _audio.Send = null;
-        _audioOn = _recordingOn = _blockingOn = _privacyOn = false;
+        _audioOn = _recordingOn = _blockingOn = _privacyOn = _screenViewingOn = false;
         _files?.Dispose(); _files = null; peer?.Dispose(); _server?.Dispose(); _server = null; _session?.Dispose(); _session = null;
         if (_closing) return;
         _devicesPage.SetSessionState(false); _devicesPage.Connecting = false; _tabs.SelectedTab = _deviceTab;
         _role.Enabled = _network.Enabled = true; _disconnect.Enabled = false; _status.Text = "●  Chưa kết nối"; _status.ForeColor = Muted;
         _remoteState.Text = "CHƯA CÓ PHIÊN KẾT NỐI"; _remoteState.ForeColor = Muted; UpdateRole();
     }
+
+    void UpdateScreenViewingPermission() => _screenStreaming?.SetPermission(_sessionIsHost && _peer != null
+        && _helloReceived && _screenViewingCapable && _permissions.ScreenViewing && !_privacyOn && !_curtain.IsVisible);
     void Log(string message)
     { if (_closing) return; if (_log.TextLength > 60000) _log.Clear(); _log.AppendText($"{DateTime.Now:HH:mm:ss}  {message}\n"); _log.SelectionStart = _log.TextLength; _log.ScrollToCaret(); }
     void Ui(Action action) { if (_closing || IsDisposed) return; if (InvokeRequired) { try { BeginInvoke(() => { if (!_closing) action(); }); } catch (InvalidOperationException) { } } else action(); }

@@ -25,6 +25,7 @@ try {
             'tests/TextInputSmoke/TextInputSmoke.csproj',
             'tests/FileSmoke/FileSmoke.csproj',
             'tests/TransportSmoke/TransportSmoke.csproj'
+            'tests/ScreenStreamingSmoke/ScreenStreamingSmoke.csproj'
         )) { Invoke-DesktopDotnet run --project $testProject -c Release }
         return
     }

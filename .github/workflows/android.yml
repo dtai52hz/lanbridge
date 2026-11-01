@@ -1,0 +1,45 @@
+name: Android controller
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - 'android/**'
+      - 'src/Transport.cs'
+      - 'src/Models.cs'
+      - 'src/ScreenStreaming.cs'
+      - 'tests/AndroidInteropSmoke/**'
+      - 'scripts/*android*.ps1'
+      - '.github/workflows/android.yml'
+permissions:
+  contents: read
+jobs:
+  android:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.403'
+      - name: Build, UI/protocol tests, lint
+        shell: bash
+        run: |
+          chmod +x android/gradlew
+          android/gradlew -p android --no-daemon assembleRelease testDebugUnitTest lintRelease
+      - name: Actual Java to .NET protocol interoperability
+        shell: pwsh
+        run: ./scripts/test-android-interop.ps1
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: android-controller
+          path: |
+            android/app/build/outputs/apk/release/*.apk
+            android/app/build/reports/tests/
+            android/app/build/reports/lint-results-release.*
+          if-no-files-found: error

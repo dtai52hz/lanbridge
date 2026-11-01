@@ -11,5 +11,6 @@
     <Compile Include="../../src/FileTransfer.cs" Link="FileTransfer.cs" />
     <Compile Include="../../src/VietnameseInput.cs" Link="VietnameseInput.cs" />
     <Compile Include="../../src/SwitchShortcut.cs" Link="SwitchShortcut.cs" />
+    <Compile Include="../../src/ScreenStreaming.cs" Link="ScreenStreaming.cs" />
   </ItemGroup>
 </Project>

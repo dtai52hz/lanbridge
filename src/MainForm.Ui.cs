@@ -156,7 +156,7 @@ public sealed partial class MainForm
         footer.RowStyles.Add(new RowStyle(SizeType.Percent, 100));
         footer.Controls.Add(UiLabel("●  Thu nhỏ vẫn giữ kết nối", 8.5f, Accent), 0, 0);
         footer.Controls.Add(UiLabel("WINDOWS 10 / 11  ·  LAN / TLS", 8, Muted), 0, 1);
-        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.7.2", 8.5f, Muted), 0, 2);
+        footer.Controls.Add(UiLabel("Bản thử nghiệm 0.7.3", 8.5f, Muted), 0, 2);
         content.Controls.Add(footer, 0, 7);
     }
 
@@ -224,10 +224,10 @@ public sealed partial class MainForm
         {
             Dock = DockStyle.Fill, ColumnCount = 1, RowCount = 6,
             Padding = new Padding(22, 17, 22, 22), Margin = Padding.Empty, AutoScroll = true,
-            AutoScrollMinSize = new Size(0, 657)
+            AutoScrollMinSize = new Size(0, 706)
         };
         main.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 100));
-        foreach (var height in new[] { 142, 48, 182, 70, 60 }) main.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
+        foreach (var height in new[] { 142, 48, 231, 70, 60 }) main.RowStyles.Add(new RowStyle(SizeType.Absolute, height));
         main.RowStyles.Add(new RowStyle(SizeType.Percent, 100)); _sessionTab.Controls.Add(main);
         var inputSettings = new TableLayoutPanel { Dock = DockStyle.Fill, ColumnCount = 2, RowCount = 1, Margin = new Padding(0, 0, 0, 9) };
         inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 53)); inputSettings.ColumnStyles.Add(new ColumnStyle(SizeType.Percent, 47));
@@ -302,7 +302,8 @@ public sealed partial class MainForm
         AddPermission("Audio", "♪  Âm thanh B"); AddPermission("Files", "↑  Truyền file");
         AddPermission("Restart", "↻  Khởi động lại"); AddPermission("Recording", "●  Ghi màn hình B");
         AddPermission("BlockInput", "⊘  Khóa phím B"); AddPermission("Privacy", "◐  Màn che B");
-        var permissionHint = UiLabel("Chỉ máy nhận điều khiển được thay đổi các quyền này.", 8, Muted);
+        AddPermission("ScreenViewing", "▣  Xem màn hình");
+        var permissionHint = UiLabel("Máy B cấp quyền. Xem màn hình mặc định tắt; điện thoại phải yêu cầu xem.", 8, Muted);
         permissionHint.Margin = new Padding(4, 2, 0, 0); permissionContent.Controls.Add(permissionHint, 0, 2);
         BindGridWidths(_permissionsPanel, 4); main.Controls.Add(permissionCard, 0, 2);
 

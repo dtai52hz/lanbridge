@@ -14,6 +14,7 @@ public sealed record Permissions
     public bool Recording { get; set; }
     public bool BlockInput { get; set; }
     public bool Privacy { get; set; }
+    public bool ScreenViewing { get; set; }
 }
 
 public sealed record Packet
@@ -44,6 +45,7 @@ public sealed record Packet
     public int ClipboardFilesVersion { get; set; }
     public int ClipboardImagesVersion { get; set; }
     public int InputDiagnosticsVersion { get; set; }
+    public int ScreenViewingVersion { get; set; }
     public string? BatchId { get; set; }
     public ClipboardFileEntry[]? ClipboardEntries { get; set; }
 }

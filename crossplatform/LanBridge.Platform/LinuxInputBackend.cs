@@ -70,6 +70,7 @@ public sealed class LinuxInputBackend : IInputBackend
             throw new PlatformNotSupportedException("Không có DISPLAY của phiên X11. Không dùng được trong phiên SSH/headless.");
         try
         {
+            X11Threading.Initialize(); // Before the first display: input and screen-view workers use separate Xlib connections.
             _thread = new Thread(Run) { IsBackground = true, Name = "LanBridge X11 input" };
             _thread.Start();
             _ready.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();

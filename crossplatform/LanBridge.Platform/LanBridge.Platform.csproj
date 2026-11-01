@@ -9,5 +9,18 @@
     <InternalsVisibleTo Include="LanBridge.Platform.Smoke" />
     <ProjectReference Include="../LanBridge.Shared/LanBridge.Shared.csproj" />
     <PackageReference Include="SharpHook" Version="8.0.1" />
+    <PackageReference Include="SkiaSharp" Version="3.119.4" />
+    <PackageReference Include="SkiaSharp.NativeAssets.Linux" Version="3.119.4" />
   </ItemGroup>
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <ScreenCaptureLibrary>$(IntermediateOutputPath)native/libLanBridge.ScreenCapture.dylib</ScreenCaptureLibrary>
+  </PropertyGroup>
+  <ItemGroup Condition="$([MSBuild]::IsOSPlatform('OSX'))">
+    <None Include="$(ScreenCaptureLibrary)" Link="libLanBridge.ScreenCapture.dylib" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+  <Target Name="BuildScreenCaptureHelper" BeforeTargets="PrepareForBuild" Condition="$([MSBuild]::IsOSPlatform('OSX'))"
+          Inputs="$(MSBuildProjectDirectory)/native/ScreenCapture.m" Outputs="$(ScreenCaptureLibrary)">
+    <MakeDir Directories="$([System.IO.Path]::GetDirectoryName('$(ScreenCaptureLibrary)'))" />
+    <Exec Command="clang -dynamiclib -fobjc-arc -fblocks -mmacosx-version-min=14.0 -framework Cocoa -framework ScreenCaptureKit -framework CoreGraphics -install_name @rpath/libLanBridge.ScreenCapture.dylib &quot;$(MSBuildProjectDirectory)/native/ScreenCapture.m&quot; -o &quot;$(ScreenCaptureLibrary)&quot;" />
+  </Target>
 </Project>

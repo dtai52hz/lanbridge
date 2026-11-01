@@ -12,7 +12,7 @@ internal static class Program
     {
         if (args.Contains("--smoke"))
         {
-            Console.WriteLine($"LanBridge Desktop 0.8.0-preview.1 · {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}");
+            Console.WriteLine($"LanBridge Desktop 0.8.0-preview.2 · {System.Runtime.InteropServices.RuntimeInformation.RuntimeIdentifier}");
             Console.WriteLine("Shared TLS/discovery protocol loaded. Smoke mode does not start hooks, input, network or a window.");
             _ = typeof(PortableInputRouter);
             return 0;

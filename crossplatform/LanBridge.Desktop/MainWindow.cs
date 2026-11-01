@@ -25,6 +25,8 @@ public sealed class MainWindow : Window
     readonly CheckBox _inputGrant = new() { Content = "Chuột / bàn phím", IsChecked = true };
     readonly CheckBox _clipboardGrant = new() { Content = "Chia sẻ clipboard chữ", IsChecked = false };
     readonly CheckBox _filesGrant = new() { Content = "Truyền file", IsChecked = true };
+    readonly CheckBox _screenGrant = new() { Content = "Cho xem màn hình", IsChecked = false };
+    readonly TextBlock _screenStatus = Label("Xem màn hình: đang tắt. Chỉ bật khi bạn muốn thiết bị điều khiển thấy màn hình này.", 12);
     readonly DispatcherTimer _clipboardTimer = new() { Interval = TimeSpan.FromMilliseconds(500) };
     readonly SemaphoreSlim _clipboardAccess = new(1, 1);
     readonly bool _existingInstance;
@@ -78,6 +80,8 @@ public sealed class MainWindow : Window
             Button("Ngắt kết nối", () => { _session?.Dispose(); return Task.CompletedTask; })));
         sessionPanel.Children.Add(Label("Quyền do máy nhận B cấp", 17));
         sessionPanel.Children.Add(Row(_inputGrant, _clipboardGrant, _filesGrant));
+        sessionPanel.Children.Add(_screenGrant);
+        sessionPanel.Children.Add(_screenStatus);
         sessionPanel.Children.Add(Label("Clipboard chữ cần được bật trên cả hai máy. Bản desktop preview có chuột/phím, Telex/VNI, chat, clipboard chữ và gửi file thủ công.", 12));
         sessionPanel.Children.Add(Button("Gửi file…", SendFileAsync));
         sessionPanel.Children.Add(Label("Nhật ký và tin nhắn", 17)); sessionPanel.Children.Add(_log);
@@ -89,13 +93,13 @@ public sealed class MainWindow : Window
             new TabItem { Header = "Thiết bị", Content = new ScrollViewer { Content = devicesPanel, Margin = new Thickness(0, 14) } },
             new TabItem { Header = "Phiên điều khiển", Content = new ScrollViewer { Content = sessionPanel, Margin = new Thickness(0, 14) } },
         };
-        var footer = Label("0.8.0-preview.1 · TLS · X11 trên Linux; Wayland chưa hỗ trợ · Ctrl + Alt + F12: thoát khẩn cấp", 12);
+        var footer = Label("0.8.0-preview.2 · TLS · X11 trên Linux; Wayland chưa hỗ trợ · Ctrl + Alt + F12: thoát khẩn cấp", 12);
         Grid.SetRow(footer, 3); root.Children.Add(footer); Content = root;
         _edge.SelectionChanged += (_, _) => { if (_input is { IsController: true }) _input.ExitEdge = (ScreenEdge)Math.Max(0, _edge.SelectedIndex); };
         _typing.SelectionChanged += (_, _) => { if (_input is { IsController: true }) _input.TypingMode = (TypingMode)Math.Max(0, _typing.SelectedIndex); };
         _shortcut.SelectionChanged += (_, _) => { if (_input != null) _input.SwitchShortcut = SelectedShortcut(); };
-        foreach (var grant in new[] { _inputGrant, _clipboardGrant, _filesGrant })
-            grant.IsCheckedChanged += (_, _) => _session?.SetLocalPermissions(LocalPermissions());
+        foreach (var grant in new[] { _inputGrant, _clipboardGrant, _filesGrant, _screenGrant })
+            grant.IsCheckedChanged += (_, _) => { _session?.SetLocalPermissions(LocalPermissions()); RefreshStatus(); };
         _clipboardTimer.Tick += async (_, _) => await SyncClipboardAsync();
         Opened += (_, _) => Initialize();
         Closing += (_, _) => Shutdown();
@@ -117,7 +121,12 @@ public sealed class MainWindow : Window
             _input.RemoteChanged += _ => Ui(RefreshStatus);
             _input.EmergencyReleased += () => Ui(() =>
             {
-                if (_session?.IsHost == true) { _inputGrant.IsChecked = false; _session.RevokeInput(); }
+                if (_session?.IsHost == true)
+                {
+                    _inputGrant.IsChecked = false;
+                    _screenGrant.IsChecked = false;
+                    _session.RevokeInput();
+                }
                 RefreshStatus();
             });
             _platform.Text = _backend.Name + " · " + _backend.Capabilities.Description;
@@ -196,7 +205,15 @@ public sealed class MainWindow : Window
             _input.TypingMode = (TypingMode)Math.Max(0, _typing.SelectedIndex);
             _input.SwitchShortcut = SelectedShortcut();
             var receive = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.UserProfile), "Downloads", "LanBridge");
-            var session = new PortablePeerSession(peer, _input, host, LocalPermissions(), receive);
+            var bounds = _backend.Bounds;
+            DesktopBounds CaptureBounds()
+            {
+                if (_backend.Bounds != bounds)
+                    throw new IOException("Bố trí màn hình đã thay đổi; kết nối lại để đồng bộ ảnh và tọa độ điều khiển.");
+                return bounds;
+            }
+            var session = new PortablePeerSession(peer, _input, host, LocalPermissions(), receive,
+                host ? DesktopScreenCapture.Create(CaptureBounds) : null);
             _session = session;
             session.Log += message => Ui(() => { if (_session == session) Log(message); });
             session.Changed += () => Ui(() => { if (_session == session) RefreshStatus(); });
@@ -206,7 +223,7 @@ public sealed class MainWindow : Window
                 _session = null; RefreshStatus(); Log("Đã ngắt phiên; chuột/phím đã được nhả.");
             });
             session.SetClipboardText = text => PublishClipboardAsync(session, text);
-            session.Start(_backend.Bounds, LocalName());
+            session.Start(bounds, LocalName());
             _sessionTabs.SelectedIndex = 1; RefreshStatus();
             Log(host ? "Đã nhận kết nối; bạn có thể thu hồi quyền Chuột / bàn phím." : "Đã kết nối. F9 để chuyển; Ctrl + Alt + F12 để thoát khẩn cấp.");
         }
@@ -221,13 +238,20 @@ public sealed class MainWindow : Window
             : _input?.IsRemote == true ? "ĐANG ĐIỀU KHIỂN MÁY B" : "Máy A · Dùng phím đã chọn để chuyển sang B";
         bool host = _session?.IsHost == true;
         _edge.IsEnabled = _typing.IsEnabled = _shortcut.IsEnabled = !host;
-        _inputGrant.IsEnabled = _filesGrant.IsEnabled = _session == null || host;
+        _inputGrant.IsEnabled = _filesGrant.IsEnabled = _screenGrant.IsEnabled = _session == null || host;
+        _screenStatus.Text = _session?.ScreenViewingActive == true
+            ? "ĐANG CHIA SẺ MÀN HÌNH với thiết bị điều khiển · bỏ chọn Cho xem màn hình để dừng ngay."
+            : _session?.ScreenViewingError is { } screenError ? screenError
+            : _screenGrant.IsChecked == true
+                ? "Xem màn hình: đã cấp quyền, đang chờ thiết bị điều khiển yêu cầu. macOS có thể hỏi thêm quyền Screen Recording."
+                : "Xem màn hình: đang tắt. Thiết bị điều khiển vẫn có thể dùng chuột/phím nếu được cấp quyền.";
     }
 
     Permissions LocalPermissions() => new()
     {
         Input = _inputGrant.IsChecked == true && _backend?.Capabilities.Inject == true,
         Clipboard = _clipboardGrant.IsChecked == true, Files = _filesGrant.IsChecked == true,
+        ScreenViewing = _screenGrant.IsChecked == true,
     };
     SwitchShortcut? SelectedShortcut() => _shortcut.SelectedIndex switch
     {

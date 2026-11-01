@@ -5,3 +5,8 @@ src/obj/
 **/obj/
 release/
 test-results/
+**/.gradle/
+android/local.properties
+android/**/build/
+*.jks
+*.keystore

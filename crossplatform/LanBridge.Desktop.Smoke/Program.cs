@@ -61,6 +61,8 @@ internal static class SmokeProgram
                     await CheckPairAsync(source, receiver, workspace).ConfigureAwait(false);
             await CheckDeclinedConsentAsync().ConfigureAwait(false);
             await CheckHelloGateAsync(workspace).ConfigureAwait(false);
+            await CheckAndroidScreenHostAsync(workspace).ConfigureAwait(false);
+            await CheckQueuedScreenPermissionAsync(workspace).ConfigureAwait(false);
             foreach (var first in new[]
             {
                 new Packet { Type = "enter", X = 32768, Y = 32768 },
@@ -250,6 +252,148 @@ internal static class SmokeProgram
         return text;
     }
 
+    private static async Task CheckAndroidScreenHostAsync(string workspace)
+    {
+        using var wire = await WirePair.ConnectAsync("Android screen controller").ConfigureAwait(false);
+        using var backend = new MemoryBackend("screen host");
+        await using var input = new PortableInputRouter(backend);
+        input.Start();
+        var capture = new FakeScreenCapture();
+        using var host = new PortablePeerSession(wire.B, input, true, new Permissions { Input = true },
+            Path.Combine(workspace, "screen-host"), capture);
+        var logs = new ConcurrentQueue<string>(); host.Log += logs.Enqueue;
+        host.Start(backend.Bounds, "desktop screen host"); wire.A.Start();
+        await wire.A.SendAsync(new Packet { Type = "hello", Name = "Android", Flags = 2, Width = 1080, Height = 2400, ScreenViewingVersion = 1 });
+        await WaitAsync(() => host.InputAllowed, "Android hello did not establish Desktop input permissions.").ConfigureAwait(false);
+        Check(wire.AtA.Any(p => p.Type == "hello" && p.ScreenViewingVersion == 1), "Screen-capable host must advertise protocol 1.");
+        Check(wire.AtA.Any(p => p.Type == "permissions" && p.Permissions?.ScreenViewing == false), "Screen viewing must default to off.");
+        await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => wire.AtA.Any(p => p.Type == "screen-state" && !p.Allow), "Unapproved screen request was not denied.").ConfigureAwait(false);
+        Check(capture.Calls == 0 && !host.ScreenViewingActive, "Denied screen request captured the desktop.");
+
+        host.SetLocalPermissions(new Permissions { Input = true, ScreenViewing = true });
+        Check(capture.Calls == 0, "Granting screen permission alone must not capture the screen.");
+        capture.Block = new TaskCompletionSource<ScreenFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+        await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => capture.Calls == 1 && host.ScreenViewingActive, "Approved request did not start the screen worker.").ConfigureAwait(false);
+        await wire.A.SendAsync(new Packet { Type = "enter", X = 32768, Y = 32768 });
+        await wire.A.SendAsync(new Packet { Type = "text", Text = "một . , ? !" });
+        await WaitAsync(() => backend.Applied.Any(p => p.Type == "text" && p.Text == "một . , ? !"),
+            "A blocked screen capture stalled Android input.").ConfigureAwait(false);
+        Check(host.Connected, "Screen capture must preserve the authenticated input session.");
+        host.SetLocalPermissions(new Permissions { Input = true, ScreenViewing = false });
+        Check(!host.ScreenViewingActive, "Revoking screen permission did not update the visible host state immediately.");
+        capture.Block.TrySetResult(FakeScreenCapture.Frame);
+        await wire.A.SendAsync(new Packet { Type = "chat", Text = "screen-revoke-barrier" });
+        await WaitAsync(() => logs.Any(s => s.Contains("screen-revoke-barrier", StringComparison.Ordinal)), "Screen revoke barrier did not arrive.").ConfigureAwait(false);
+        Check(!wire.AtA.Any(p => p.Type == "screen-frame"), "An in-flight frame escaped the screen-permission revocation.");
+
+        capture.Block = null;
+        host.SetLocalPermissions(new Permissions { Input = true, ScreenViewing = true });
+        await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => wire.AtA.Any(p => p.Type == "screen-frame"), "Granted fake JPEG did not traverse real TLS.").ConfigureAwait(false);
+        var frame = wire.AtA.First(p => p.Type == "screen-frame");
+        Check(frame.Encoding == 1 && frame.Width == 1280 && frame.Height == 720 && frame.Data!.SequenceEqual(FakeScreenCapture.Frame.Jpeg),
+            "Desktop screen dimensions or JPEG payload changed over TLS.");
+        await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = false });
+        await WaitAsync(() => !host.ScreenViewingActive, "Explicit stop request did not stop Desktop screen sharing.").ConfigureAwait(false);
+        Check(host.Connected && host.InputAllowed, "Stopping screen viewing revoked separately granted input.");
+        capture.Fail = true;
+        await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => host.ScreenViewingError != null, "Capture failures are not exposed to the host UI.").ConfigureAwait(false);
+        Check(!host.ScreenViewingActive && host.Connected, "Capture failure must stop viewing and retain the input session.");
+        capture.Fail = false;
+        await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => host.ScreenViewingActive, "Screen viewing could not restart after a recoverable capture failure.").ConfigureAwait(false);
+        host.Dispose();
+        Check(!host.ScreenViewingActive, "Disconnect retained active screen sharing.");
+
+        using var earlyWire = await WirePair.ConnectAsync("early screen controller").ConfigureAwait(false);
+        using var earlyBackend = new MemoryBackend("early screen host");
+        await using var earlyInput = new PortableInputRouter(earlyBackend);
+        var earlyCapture = new FakeScreenCapture();
+        using var earlyHost = new PortablePeerSession(earlyWire.B, earlyInput, true,
+            new Permissions { ScreenViewing = true }, Path.Combine(workspace, "early-screen-host"), earlyCapture);
+        earlyHost.Start(earlyBackend.Bounds, "early screen host"); earlyWire.A.Start();
+        await earlyWire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => !earlyHost.Connected, "Screen requests before hello must close the malformed session.").ConfigureAwait(false);
+        Check(earlyCapture.Calls == 0, "Malformed pre-hello session captured a screen.");
+
+        using var oldWire = await WirePair.ConnectAsync("old controller").ConfigureAwait(false);
+        using var oldBackend = new MemoryBackend("screen host for old peer");
+        await using var oldInput = new PortableInputRouter(oldBackend);
+        var oldCapture = new FakeScreenCapture();
+        using var oldHost = new PortablePeerSession(oldWire.B, oldInput, true,
+            new Permissions { Input = true, ScreenViewing = true }, Path.Combine(workspace, "old-screen-host"), oldCapture);
+        oldHost.Start(oldBackend.Bounds, "old-screen-host"); oldWire.A.Start();
+        await oldWire.A.SendAsync(new Packet { Type = "hello", Flags = 2, Width = 1920, Height = 1080 });
+        await WaitAsync(() => oldHost.InputAllowed, "Old compatible peers must retain input support.").ConfigureAwait(false);
+        await oldWire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+        await WaitAsync(() => oldWire.AtA.Any(p => p.Type == "screen-state" && !p.Allow), "Screen requests without capability negotiation were not denied.").ConfigureAwait(false);
+        Check(oldCapture.Calls == 0 && oldHost.Connected, "Unnegotiated screen capture ran or broke old-peer input compatibility.");
+    }
+
+    private static async Task CheckQueuedScreenPermissionAsync(string workspace)
+    {
+        foreach (bool initiallyGranted in new[] { false, true })
+        {
+            using var wire = await WirePair.ConnectAsync("queued Android screen controller").ConfigureAwait(false);
+            using var backend = new MemoryBackend("stalled screen host");
+            await using var input = new PortableInputRouter(backend);
+            input.Start();
+            var capture = new FakeScreenCapture();
+            var grants = new Permissions { Input = true, ScreenViewing = initiallyGranted };
+            using var host = new PortablePeerSession(wire.B, input, true, grants,
+                Path.Combine(workspace, "queued-screen-" + initiallyGranted), capture);
+            var logs = new ConcurrentQueue<string>(); host.Log += logs.Enqueue;
+            host.Start(backend.Bounds, "stalled screen host"); wire.A.Start();
+            await wire.A.SendAsync(new Packet { Type = "hello", Name = "Android", Flags = 2, Width = 1080, Height = 2400, ScreenViewingVersion = 1 });
+            await WaitAsync(() => host.InputAllowed, "Queued-screen test did not finish hello.").ConfigureAwait(false);
+            await wire.A.SendAsync(new Packet { Type = "enter", X = 32768, Y = 32768 });
+            await WaitAsync(() => backend.Applied.Any(p => p.Type == "enter"), "Queued-screen test did not enter remote input.").ConfigureAwait(false);
+
+            var entered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var arrived = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            using var release = new ManualResetEventSlim();
+            backend.BeforeInject = packet =>
+            {
+                if (packet.Type != "text" || packet.Text != "stall-screen-permission") return;
+                entered.TrySetResult();
+                if (!release.Wait(TimeSpan.FromSeconds(8))) throw new TimeoutException("Synthetic input stall was not released.");
+            };
+            void Observed(Packet packet)
+            {
+                // Registered after PortablePeerSession.Receive: this barrier means the earlier
+                // request is already queued, while ProcessIncoming is blocked on fake input.
+                if (packet.Type == "chat" && packet.Text == "queued-screen-barrier") arrived.TrySetResult();
+            }
+            wire.B.Received += Observed;
+            try
+            {
+                await wire.A.SendAsync(new Packet { Type = "text", Text = "stall-screen-permission" });
+                await entered.Task.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+                await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+                await wire.A.SendAsync(new Packet { Type = "chat", Text = "queued-screen-barrier" });
+                await arrived.Task.WaitAsync(TimeSpan.FromSeconds(8)).ConfigureAwait(false);
+                Check(capture.Calls == 0, "Queued screen test must begin before its capture worker starts.");
+                if (initiallyGranted) host.SetLocalPermissions(grants with { ScreenViewing = false });
+                host.SetLocalPermissions(grants with { ScreenViewing = true });
+            }
+            finally { release.Set(); wire.B.Received -= Observed; }
+            await WaitAsync(() => logs.Any(s => s.Contains("queued-screen-barrier", StringComparison.Ordinal)),
+                "Input-stalled screen request never resumed.").ConfigureAwait(false);
+            Check(capture.Calls == 0 && !host.ScreenViewingActive,
+                initiallyGranted ? "Regrant revived a queued screen request from the revoked permission generation."
+                    : "A later grant authorized a screen request received before local consent.");
+            await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = true });
+            await WaitAsync(() => capture.Calls > 0 && host.ScreenViewingActive,
+                "Fresh screen request after the permission change did not work.").ConfigureAwait(false);
+            Check(host.Connected && host.InputAllowed, "Queued screen permission fencing broke the separate input session.");
+            await wire.A.SendAsync(new Packet { Type = "screen-request", Allow = false });
+            await WaitAsync(() => !host.ScreenViewingActive, "Stop request must remain accepted after screen permission generations change.").ConfigureAwait(false);
+        }
+    }
+
     private static async Task CheckDeclinedConsentAsync()
     {
         using var host = new HostServer(IPAddress.Loopback, 0);
@@ -382,6 +526,10 @@ internal static class SmokeProgram
             Check(labels.Any(t => t.Contains("Phím chuyển A ⇄ B", StringComparison.Ordinal)), "Shortcut label missing from the session page.");
             Check(labels.Any(t => t.Contains("Ctrl + Alt + F12", StringComparison.Ordinal)), "Emergency escape key missing from the UI.");
             Check(Get<object?>(window, "_backend") is null, "Switching preview tabs created native input.");
+            var screenGrant = Get<CheckBox>(window, "_screenGrant");
+            Check(screenGrant.IsChecked == false, "Screen viewing must be visibly unchecked in a new window.");
+            Check(Get<TextBlock>(window, "_screenStatus").Text?.Contains("đang tắt", StringComparison.Ordinal) == true,
+                "Screen-viewing permission explanation is missing from the session page.");
         }
         finally { window.Close(); Dispatcher.UIThread.RunJobs(); }
     }
@@ -424,6 +572,20 @@ internal static class SmokeProgram
         public void Dispose() { A.Dispose(); B.Dispose(); _host.Dispose(); }
     }
 
+    private sealed class FakeScreenCapture : IScreenCapture
+    {
+        internal static readonly ScreenFrame Frame = new([0xff, 0xd8, 1, 2, 3, 0xff, 0xd9], 1280, 720);
+        internal int Calls;
+        internal TaskCompletionSource<ScreenFrame>? Block;
+        internal bool Fail;
+        public Task<ScreenFrame> CaptureAsync(CancellationToken cancellationToken)
+        {
+            Interlocked.Increment(ref Calls);
+            if (Fail) throw new IOException("Fake Screen Recording denied.");
+            return Block?.Task ?? Task.FromResult(Frame);
+        }
+    }
+
     private sealed class MemoryBackend(string name) : IInputBackend
     {
         public string Name { get; } = name;
@@ -443,11 +605,13 @@ internal static class SmokeProgram
         public bool HasHeldKey(int key) { lock (_heldGate) return _heldKeys.Contains(key); }
         public bool HasHeldButton(string button) { lock (_heldGate) return _heldButtons.Contains(button); }
         public volatile bool Capturing;
+        public Action<Packet>? BeforeInject;
         public void Start() => Interlocked.Increment(ref Starts);
         public void SetCapture(bool active) => Capturing = active;
         public void Warp(DesktopPoint point) => Position = point;
         public void Inject(Packet packet)
         {
+            BeforeInject?.Invoke(packet);
             lock (_heldGate)
             {
                 if (packet.Type == "key") { if (packet.Down) _heldKeys.Add(packet.Key); else _heldKeys.Remove(packet.Key); }

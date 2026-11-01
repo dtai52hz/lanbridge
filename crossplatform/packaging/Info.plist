@@ -4,12 +4,13 @@
   <key>CFBundleName</key><string>LanBridge Desktop</string>
   <key>CFBundleDisplayName</key><string>LanBridge Desktop Preview</string>
   <key>CFBundleIdentifier</key><string>vn.lanbridge.desktop</string>
-  <key>CFBundleVersion</key><string>0.8.0</string>
+  <key>CFBundleVersion</key><string>0.8.2</string>
   <key>CFBundleShortVersionString</key><string>0.8.0</string>
   <key>CFBundlePackageType</key><string>APPL</string>
   <key>CFBundleExecutable</key><string>LanBridge.Desktop</string>
   <key>LSMinimumSystemVersion</key><string>14.0</string>
   <key>NSHighResolutionCapable</key><true/>
   <key>NSInputMonitoringUsageDescription</key><string>LanBridge uses your keyboard and mouse only in an approved LAN control session.</string>
+  <key>NSScreenCaptureUsageDescription</key><string>LanBridge shares your desktop only when you enable screen viewing for an approved LAN controller and that controller requests a view.</string>
   <key>NSHumanReadableCopyright</key><string>Copyright 2026 dtai52hz. MIT License.</string>
 </dict></plist>

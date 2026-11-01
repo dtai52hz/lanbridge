@@ -1,25 +1,36 @@
 # LanBridge · Windows / macOS / Linux
 
-**[Tải LanBridge cho Windows, macOS và Linux tại trang Releases chung](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2)**. Mở **Assets** hoặc chọn liên kết trong bảng tải trên trang phát hành.
+**[Tải LanBridge cho Windows, macOS, Linux và Android tại trang Releases chung](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.3)**. Mở **Assets** hoặc chọn liên kết trong bảng tải trên trang phát hành.
 
 | Máy | Gói nên chọn |
 | --- | --- |
-| Windows 10/11 x64 | `LanBridge-0.7.2-Setup-x64.exe` để cài, hoặc `LanBridge-0.7.2-Windows-x64.zip` để chạy trực tiếp |
-| Mac Apple Silicon / Mac Intel, macOS 14+ | Desktop `0.8.0-preview.1`, chọn `osx-arm64` / `osx-x64` |
-| Linux X11 x64 / ARM64 | Desktop `0.8.0-preview.1`, chọn `linux-x64` / `linux-arm64` |
-| Windows x64, thử giao diện đa nền tảng | `LanBridge-Desktop-0.8.0-preview.1-win-x64.zip` |
+| Windows 10/11 x64 | `LanBridge-0.7.3-Setup-x64.exe` để cài, hoặc `LanBridge-0.7.3-Windows-x64.zip` để chạy trực tiếp |
+| Mac Apple Silicon / Mac Intel, macOS 14+ | Desktop `0.8.0-preview.2`, chọn `osx-arm64` / `osx-x64` |
+| Linux X11 x64 / ARM64 | Desktop `0.8.0-preview.2`, chọn `linux-x64` / `linux-arm64` |
+| Android 8 trở lên, điều khiển máy tính | `LanBridge-Android-0.1.0-preview.1.apk` |
+| Windows x64, thử giao diện đa nền tảng | `LanBridge-Desktop-0.8.0-preview.2-win-x64.zip` |
 
-Trang tải chung giữ phiên bản riêng của từng gói: **Windows 0.7.2** có bản sửa kênh gõ tiếng Việt; **Desktop 0.8.0-preview.1** giữ nguyên các gói preview đã phát hành, chưa có bản sửa này. [Mã nguồn đa nền tảng](crossplatform/) · [Hướng dẫn desktop preview](crossplatform/README.md) · [Tag nguồn của các gói preview](https://github.com/dtai52hz/lanbridge/tree/v0.8.0-preview.1). Preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ và gửi file thủ công. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview.
+Trang tải chung giữ phiên bản riêng của từng gói: **Windows 0.7.3**, **Desktop 0.8.0-preview.2** và **Android 0.1.0-preview.1**. Windows giữ bản sửa kênh gõ 0.7.2; cơ chế bảo trì hook đó chưa chuyển sang Desktop preview. [Hướng dẫn desktop preview](crossplatform/README.md) · [Hướng dẫn Android](android/README.md). Desktop preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ, gửi file thủ công và chia sẻ màn hình cho Android. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview.
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: dùng chuột và bàn phím của A trên máy B bằng cách đưa chuột qua mép màn hình hoặc nhấn phím chuyển do bạn gán. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
-[Tải bản Windows 0.7.2](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2): chọn **LanBridge-0.7.2-Setup-x64.exe** để cài tự động, hoặc ZIP để chạy trực tiếp. Mã nguồn công khai theo [giấy phép MIT](LICENSE); có thể tải, sửa và phân phối theo điều kiện trong giấy phép.
+[Tải bản Windows 0.7.3](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.3): chọn **LanBridge-0.7.3-Setup-x64.exe** để cài tự động, hoặc ZIP để chạy trực tiếp. Mã nguồn công khai theo [giấy phép MIT](LICENSE); có thể tải, sửa và phân phối theo điều kiện trong giấy phép.
+
+## Điều khiển máy tính bằng Android
+
+1. Cài APK trên điện thoại Android 8 trở lên; mở LanBridge trên điện thoại và máy tính cùng mạng LAN/Wi-Fi.
+2. Chọn máy tính trong danh sách, rồi bấm **Đồng ý** tại máy tính. Có thể dán mã LB1 nếu mạng chặn tìm thiết bị.
+3. Dùng **Bàn rê chuột**: vuốt một ngón để rê, chạm để bấm, hai ngón để cuộn. Có nút bấm phải, giữ/nhả chuột trái, Esc/Tab/Enter và phím tắt.
+4. Muốn nhìn màn hình máy tính trên điện thoại, cập nhật máy tính lên Windows **0.7.3** hoặc Desktop **0.8.0-preview.2**, bật quyền **Xem màn hình** tại máy tính rồi chọn **Xem màn hình** trên điện thoại. Quyền này mặc định tắt và tách khỏi quyền Chuột/phím. Trên Mac cần cấp thêm quyền Screen Recording.
+5. Nhập tiếng Việt bằng bàn phím điện thoại vào ô chữ rồi bấm **Gửi**. LanBridge gửi chữ Unicode đã có dấu; không chạy Telex lần nữa trên máy tính.
+
+Đây là Android preview một chiều **điện thoại → máy tính**, chưa có điều khiển điện thoại từ PC, clipboard/file/âm thanh trên Android. Ảnh màn hình tối đa 1280×800, 5 khung/giây; phù hợp thao tác cơ bản, chưa dành cho video/game. Khi về nền, điện thoại dừng nhận hình và nhả điều khiển. [Chi tiết cài đặt và giới hạn](android/README.md).
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 
 ## Chạy trên hai máy
 
-1. Trên **cả hai máy**, chạy bộ cài `LanBridge-0.7.2-Setup-x64.exe`, rồi mở **LanBridge** từ Start menu. Hoặc giải nén ZIP và mở `LanBridge.exe`. Không cần cài .NET riêng.
+1. Trên **cả hai máy**, chạy bộ cài `LanBridge-0.7.3-Setup-x64.exe`, rồi mở **LanBridge** từ Start menu. Hoặc giải nén ZIP và mở `LanBridge.exe`. Không cần cài .NET riêng.
 2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
 3. Trên máy có chuột/bàn phím chính (**A**), tìm tên và IP của **B** rồi bấm **Kết nối** ở thẻ máy đó. Không cần chọn vai trò A/B, nhập IP hoặc chép mã trong luồng này.
 4. Trên **B**, hộp **Yêu cầu kết nối** hiện tên và IP của A. Bấm **Đồng ý** để nhận điều khiển, hoặc **Từ chối**. Mỗi yêu cầu tìm qua danh sách đều cần xác nhận tại B; yêu cầu hết hạn sau 30 giây.
@@ -40,7 +51,7 @@ Gỡ tại **Windows Settings → Apps → Installed apps → LanBridge → Unin
 Cài im lặng, dùng thư mục mặc định và không tự mở ứng dụng sau cài:
 
 ```powershell
-Start-Process .\LanBridge-0.7.2-Setup-x64.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
+Start-Process .\LanBridge-0.7.3-Setup-x64.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
 ```
 
 ## Kết nối bằng mã khi cần
