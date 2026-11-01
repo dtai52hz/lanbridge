@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../../src/NativeInput.cs" Link="NativeInput.cs" />
+    <Compile Include="../../src/KeyboardHookLease.cs" Link="KeyboardHookLease.cs" />
     <Compile Include="../../src/Models.cs" Link="Models.cs" />
     <Compile Include="../../src/VietnameseInput.cs" Link="VietnameseInput.cs" />
     <Compile Include="../../src/SwitchShortcut.cs" Link="SwitchShortcut.cs" />

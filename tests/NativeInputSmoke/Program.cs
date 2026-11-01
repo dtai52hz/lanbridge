@@ -96,6 +96,7 @@ CapturePathChecks.Run(Check);
 MouseSpeedChecks.Run(Check);
 SwitchShortcutChecks.Run(Check);
 TypingRecoveryChecks.Run(Check);
+KeyboardHookMaintenanceChecks.Run(Check);
 InputDiagnosticsChecks.Run(Check);
 NativeWorkerChecks.Run(Check);
 Console.WriteLine($"Native input smoke passed: {assertions} assertions; no hooks installed and no input injected.");

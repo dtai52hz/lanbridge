@@ -63,6 +63,7 @@ public sealed partial class MainForm
     {
         var input = _input.GetDiagnosticsSnapshot();
         var typing = _input.GetTypingDiagnosticsSnapshot();
+        var keyboardHook = _input.GetKeyboardHookDiagnosticsSnapshot();
         var text = new StringBuilder();
         bool host = _peer == null ? IsHost : _sessionIsHost;
         text.AppendLine($"LanBridge {Application.ProductVersion} · {(host ? "Máy B" : "Máy A")}");
@@ -93,6 +94,9 @@ public sealed partial class MainForm
             text.AppendLine($"Phím chuyển đang dùng trên A: {_input.SwitchShortcut?.DisplayName ?? "chưa gán / đang tạm dừng"}.");
             text.AppendLine($"Dịch phím trên A: thành công {typing.PrintableTranslationSuccesses}; thất bại {typing.PrintableTranslationFailures}; dùng đường dự phòng {typing.PrintableFallbacks}.");
             text.AppendLine($"Phím xuống đi đường gốc: chế độ Phím gốc {typing.PhysicalModeKeyDowns}; tổ hợp Ctrl/Alt/Win {typing.ShortcutBypassKeyDowns}.");
+            text.AppendLine($"Kênh bắt phím trên A: làm mới {keyboardHook.SuccessfulRenewals}; lỗi {keyboardHook.FailedRenewals}; chờ dọn {keyboardHook.PendingRetired}; {(keyboardHook.RefreshRequested ? "đang chờ lúc nhả hết phím" : "không có yêu cầu chờ")}.");
+            text.AppendLine(keyboardHook.LastRenewalAgeMilliseconds < 0 ? "Chưa làm mới kênh bắt phím trong phiên ứng dụng này."
+                : $"Lần làm mới kênh bắt phím gần nhất: {Ms(keyboardHook.LastRenewalAgeMilliseconds / 1000)}s trước.");
             text.AppendLine($"Chữ đưa vào hàng gửi từ A: {typing.OutgoingTextPackets} gói; ngoài ASCII {typing.OutgoingNonAsciiCodeUnits}; xóa lùi để ghép dấu {typing.OutgoingBackspaces}.");
         }
         else text.AppendLine("B nhận chữ Unicode đã ghép từ A; chế độ Telex/VNI phải chọn trên A.");

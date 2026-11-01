@@ -12,7 +12,7 @@ Workflow `Desktop platforms` chạy trên Windows x64, macOS Intel/ARM64 và Ubu
 
 macOS native cần thử trên máy Mac đã cấp Accessibility/Input Monitoring; Linux Wayland chưa hỗ trợ. Xem [hướng dẫn và giới hạn desktop preview](crossplatform/README.md).
 
-## Bộ cài Windows 0.7.1
+## Bộ cài Windows 0.7.2
 
 ```powershell
 pwsh -File scripts/setup-installer-tools.ps1
@@ -24,7 +24,19 @@ Phép thử installer dùng một thư mục mới bên trong `.tools`, truyền
 
 Kiểm tra trước/sau bao gồm registry uninstall, shortcut và thiết lập thật, các tiến trình LanBridge đã mở và file dữ liệu nằm ngoài thư mục cài. Không khởi chạy hook, mạng, clipboard thật hoặc thay bản đang dùng. Phép thử này xác minh chép file, chạy preview và gỡ file; đăng ký Installed apps/shortcut của chế độ cài bình thường cần thử thủ công trên Windows.
 
-Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.1.
+Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.2.
+
+## Hồi quy gõ lâu 0.7.2
+
+Đã chạy đạt cả 15 bộ kiểm tra Windows trong đợt 0.7.2, gồm NativeInputSmoke **1.869 assertions**, SessionSmoke **554**, DesktopSmoke **96** và TextInputSmoke **2.419**. Bài thử phiên được cập nhật theo hành vi làm mới ngay khi vào B, rồi chạy lại toàn bộ SessionSmoke đạt; các bộ còn lại đã đạt trong lượt Test đầy đủ.
+
+Bộ bắt phím giả dùng cùng đường callback/routing của ứng dụng: cho một consumer đứng trước LanBridge nuốt hai lần `j`, tái hiện phải gõ lần thứ ba để `môt` thành `một`. Sau khi làm mới đăng ký của LanBridge trong chuỗi giả, `mootj` phải thành `một` ngay lượt đầu. Kiểm tra còn giữ từ đang ghép, trì hoãn làm mới khi giữ Ctrl/Shift/phím chuyển hoặc kéo chuột, lỗi đăng ký/gỡ cũ, và giới hạn callback chờ dọn.
+
+Một kiểm tra TLS kéo dài qua nhiều từ đối chiếu chính xác Unicode/Backspace, xen Ctrl+C và di chuyển/cuộn; các phép thử gọi native giả, không cài hook hoặc gõ vào desktop thật. Nút Đặt lại được kiểm tra với Ctrl giả bị mất key-up: nhả B, xóa trạng thái cũ, giữ quyền/TLS và bắt đầu từ mới. Việc bảo trì tự động không xóa bảng phím đang giữ.
+
+Các probe bổ sung trong `.tools` đã đối chiếu 6.000 từ qua router/TLS/receiver, 10.000 từ qua composer và 360.000 lời gọi dịch phím Windows chỉ đọc với cờ không thay đổi dead-key state. Không thấy lỗi theo số lượng ở các đường này. Đây không phải phiên vật lý nhiều giờ hoặc bằng chứng EVKey gây lỗi thật; ứng dụng trên hai máy đã được người dùng mở lại trước khi lấy số liệu lúc lỗi.
+
+Thử máy thật: cập nhật A lên 0.7.2, giữ B 0.7.1 hoặc cập nhật cả hai; gõ `mootj tieengs vieetj . , ? !` ngay sau kết nối và sau nhiều lần chuyển máy/đổi ứng dụng. Thử khi có/không có bộ gõ ngoài trên từng máy. Nếu tái diễn, chép phần BỘ GÕ trên A/B trước khi đóng ứng dụng; đối chiếu dịch phím, đường tổ hợp, Unicode gửi/nhận và số lần làm mới kênh phím. Bản sửa chưa được đánh dấu đạt trên hai máy vật lý của người dùng.
 
 ## Bộ kiểm tra ứng dụng
 

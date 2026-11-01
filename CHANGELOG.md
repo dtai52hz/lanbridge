@@ -1,3 +1,10 @@
+# 0.7.2 — Khôi phục kênh gõ khi dùng lâu
+
+- Làm mới kênh bắt bàn phím riêng trên A khi bắt đầu điều khiển và bảo trì ở lúc nhả hết phím/nút. Giữ từ đang ghép, phiên TLS, quyền và thứ tự đầu vào; không đặt lại trạng thái phím theo thời gian.
+- Quản lý từng lần đăng ký hook để chỉ một callback được xử lý đầu vào khi thay kênh. Đăng ký mới trước khi gỡ cũ; giữ kênh cũ nếu đăng ký lỗi và giới hạn callback chờ dọn.
+- Nút Đặt lại trên A khôi phục cả trạng thái phím cũ và kênh nhận phím. Nhả các phím đang giữ rồi chuyển sang B để gõ tiếp; không cần đóng ứng dụng trên hai máy. Thêm số liệu làm mới kênh phím vào báo cáo BỘ GÕ, không lưu nội dung đã gõ.
+- Thêm hồi quy bộ bắt phím giả đứng trước LanBridge nuốt hai lần phím dấu, gõ nhiều từ qua TLS và khôi phục khi mất sự kiện nhả modifier. Lỗi thật đã được người dùng xóa bằng cách mở lại ứng dụng trước khi thu số liệu; chưa xác nhận EVKey hoặc bộ bắt phím khác là nguyên nhân thực tế.
+
 # 0.8.0-preview.1 — Desktop đa nền tảng
 
 - Thêm ứng dụng Avalonia riêng cho Windows x64, macOS Intel/Apple Silicon và Linux X11 x64/ARM64. Dùng chung TLS, ghim chứng chỉ, discovery và xác nhận kết nối; không thay đổi đường nhập của Windows 0.7.1 ổn định.

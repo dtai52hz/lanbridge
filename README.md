@@ -1,18 +1,18 @@
 # LanBridge · Windows / macOS / Linux
 
-**Bản đa nền tảng mới: [Tải LanBridge Desktop 0.8.0-preview.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.8.0-preview.1)** — có gói Windows, macOS Intel/Apple Silicon và Linux X11 x64/ARM64. Mở **Assets** trong trang phát hành để chọn gói phù hợp. Đây là pre-release nên mục Latest của GitHub vẫn trỏ tới bản Windows 0.7.1 ổn định.
+**Bản đa nền tảng mới: [Tải LanBridge Desktop 0.8.0-preview.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.8.0-preview.1)** — có gói Windows, macOS Intel/Apple Silicon và Linux X11 x64/ARM64. Mở **Assets** trong trang phát hành để chọn gói phù hợp. Đây là pre-release; mục Latest của GitHub dành cho bản Windows ổn định.
 
-[Mã nguồn đa nền tảng](crossplatform/) · [Hướng dẫn desktop preview](crossplatform/README.md). Preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ và gửi file thủ công. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview; bản Windows 0.7.1 bên dưới vẫn là bản ổn định hiện hành.
+[Mã nguồn đa nền tảng](crossplatform/) · [Hướng dẫn desktop preview](crossplatform/README.md). Preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ và gửi file thủ công. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview; bản Windows 0.7.2 bên dưới là bản ổn định hiện hành.
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: dùng chuột và bàn phím của A trên máy B bằng cách đưa chuột qua mép màn hình hoặc nhấn phím chuyển do bạn gán. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
-[Tải bản Windows 0.7.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.1): chọn **LanBridge-0.7.1-Setup-x64.exe** để cài tự động, hoặc ZIP để chạy trực tiếp. Mã nguồn công khai theo [giấy phép MIT](LICENSE); có thể tải, sửa và phân phối theo điều kiện trong giấy phép.
+[Tải bản Windows 0.7.2](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2): chọn **LanBridge-0.7.2-Setup-x64.exe** để cài tự động, hoặc ZIP để chạy trực tiếp. Mã nguồn công khai theo [giấy phép MIT](LICENSE); có thể tải, sửa và phân phối theo điều kiện trong giấy phép.
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 
 ## Chạy trên hai máy
 
-1. Trên **cả hai máy**, chạy bộ cài `LanBridge-0.7.1-Setup-x64.exe`, rồi mở **LanBridge** từ Start menu. Hoặc giải nén ZIP và mở `LanBridge.exe`. Không cần cài .NET riêng.
+1. Trên **cả hai máy**, chạy bộ cài `LanBridge-0.7.2-Setup-x64.exe`, rồi mở **LanBridge** từ Start menu. Hoặc giải nén ZIP và mở `LanBridge.exe`. Không cần cài .NET riêng.
 2. Ứng dụng mở trang **Thiết bị trong mạng**, tự tìm các máy cũng đang mở LanBridge trong cùng mạng LAN. Nếu Windows hỏi tường lửa, cho phép ứng dụng trên mạng **Riêng tư / Private**.
 3. Trên máy có chuột/bàn phím chính (**A**), tìm tên và IP của **B** rồi bấm **Kết nối** ở thẻ máy đó. Không cần chọn vai trò A/B, nhập IP hoặc chép mã trong luồng này.
 4. Trên **B**, hộp **Yêu cầu kết nối** hiện tên và IP của A. Bấm **Đồng ý** để nhận điều khiển, hoặc **Từ chối**. Mỗi yêu cầu tìm qua danh sách đều cần xác nhận tại B; yêu cầu hết hạn sau 30 giây.
@@ -33,7 +33,7 @@ Gỡ tại **Windows Settings → Apps → Installed apps → LanBridge → Unin
 Cài im lặng, dùng thư mục mặc định và không tự mở ứng dụng sau cài:
 
 ```powershell
-Start-Process .\LanBridge-0.7.1-Setup-x64.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
+Start-Process .\LanBridge-0.7.2-Setup-x64.exe -ArgumentList '/VERYSILENT', '/SUPPRESSMSGBOXES', '/NORESTART', '/SP-' -Wait
 ```
 
 ## Kết nối bằng mã khi cần
@@ -61,11 +61,17 @@ Tính năng này xử lý trên máy A, dùng giao thức chuyển máy hiện c
 
 ## Tiện dùng hằng ngày
 
-Từ 0.7.1, nút **Đặt lại** cạnh ô **Bộ gõ trên máy A** trả chuột/phím về A và bắt đầu lại bộ ghép dấu đang chọn, kể cả khi vẫn chọn Telex. Sau đó chuyển sang B để gõ tiếp; phiên kết nối, quyền và phím chuyển được giữ. Nếu chọn nhầm Phím gốc, hãy chọn lại Telex/VNI trên A trước khi bấm Đặt lại.
+Từ 0.7.2, nút **Đặt lại** cạnh ô **Bộ gõ trên máy A** trả chuột/phím về A, nhả trạng thái phím cũ và khôi phục cả kênh nhận phím lẫn bộ ghép dấu đang chọn. **Nhả các phím đang giữ**, rồi chuyển sang B để gõ tiếp; phiên kết nối, quyền và phím chuyển được giữ. Cách này xử lý cả trạng thái Ctrl/Alt/Win bị kẹt khi mất sự kiện nhả phím, thay vì phải đóng hai ứng dụng. Nếu chọn nhầm Phím gốc, hãy chọn lại Telex/VNI trên A trước khi bấm Đặt lại.
+
+Trong lúc A điều khiển B, 0.7.2 yêu cầu làm mới kênh bắt bàn phím khi bắt đầu điều khiển và bảo trì lúc không giữ phím/nút chuột. Bộ ghép từ, phiên TLS và thứ tự đầu vào được giữ trong lần bảo trì. Cơ chế này xử lý lớp lỗi bộ bắt phím khác được cài lên trước LanBridge và nuốt phím dấu; không có thao tác tự xóa trạng thái phím đang giữ theo thời gian.
+
+Đã tái hiện bằng bộ bắt phím giả tình huống phải gõ `j` ba lần mới được `một`, và kiểm tra lại một lần `mootj` sau khi khôi phục thứ tự bắt phím. Chưa ghi được trạng thái lúc lỗi trên hai máy thật vì ứng dụng đã được khởi động lại; sự hiện diện của EVKey không đủ để kết luận đó là nguyên nhân. Các bộ gõ/hook khác vẫn có thể can thiệp đầu vào, đặc biệt ở máy B.
+
+Nếu tái diễn khi dùng Telex/VNI trong LanBridge, hãy thử chuyển EVKey/UniKey trên A sang **E (tiếng Anh)** để khoanh vùng xung đột. B nhận chữ Unicode đã được LanBridge ghép dấu trên A. Thay đổi chính của 0.7.2 nằm trên **máy A**; B 0.7.1 vẫn kết nối được.
 
 0.7.1 sửa đường dự phòng khi Windows không dịch được một phím chữ Latin: Telex/VNI tiếp tục ghép từ thay vì gửi phím gốc rồi quên phần từ trước đó. Các bản dịch hợp lệ của Windows vẫn được giữ; không ép dấu câu và dead key theo bàn phím Mỹ. Thay đổi xử lý ở A, không đổi giao thức; B 0.6.1/0.7.0 vẫn kết nối được.
 
-Nếu vẫn mất dấu, mở **Đo độ trễ** sau khi thử gõ một câu. Phần **BỘ GÕ** cho biết chế độ đang chọn/đang xử lý, số lần dịch phím hoặc dùng đường dự phòng và số gói chữ có ký tự ngoài ASCII. Bản 0.7.1 trên B hiển thị thêm số gói chữ nhận được. Báo cáo chỉ chứa bộ đếm và cấu hình, không chứa nội dung đã gõ; các số đếm không xác nhận ứng dụng đích đã hiện chữ.
+Nếu vẫn mất dấu, mở **Đo độ trễ** sau khi thử gõ một câu. Phần **BỘ GÕ** cho biết chế độ đang chọn/đang xử lý, số lần dịch phím hoặc dùng đường dự phòng, số gói Unicode gửi/nhận và số lần làm mới kênh bắt phím. Chép báo cáo **trên cả A và B trước khi đóng ứng dụng**. Báo cáo chỉ chứa bộ đếm và cấu hình, không chứa nội dung đã gõ; các số đếm không xác nhận ứng dụng đích đã hiện chữ.
 
 Trên trang **Phiên điều khiển**, bấm vị trí B quanh hình **Máy A** để chọn mép chuyển chuột, hoặc dùng danh sách phía dưới. Khi sơ đồ được chọn, bốn phím mũi tên chọn bên tương ứng. Các thiết lập điều khiển này được thay đổi trên A.
 
@@ -119,7 +125,7 @@ Các mục có gần nhất/trung bình/cực đại, số lần từ 50 ms và 
 
 ## Ctrl+C / Ctrl+V file giữa hai máy
 
-1. Dùng **LanBridge 0.7.1 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
+1. Dùng **LanBridge 0.7.2 trên cả A và B**, kết nối như thường. Trên B bật cả **Clipboard chữ/ảnh/file** và **Truyền file**.
 2. Trên B, mở File Explorer, chọn một hoặc nhiều file/thư mục rồi nhấn **Ctrl+C**. Có thể làm khi đang điều khiển B bằng chuột/phím của A.
 3. LanBridge tự truyền bản sao qua phiên TLS, kiểm tra đủ dữ liệu và SHA-256. Nhật ký hiện **Clipboard đã sẵn sàng** khi toàn bộ lựa chọn đã nhận xong.
 4. Chuyển chuột về A, mở thư mục đích trong File Explorer rồi **Ctrl+V**. Không cần mở hộp **Gửi file**. Chiều A → B dùng cùng cách.
@@ -130,7 +136,7 @@ Bản nhận nằm trong bộ nhớ đệm riêng `%LOCALAPPDATA%\LanBridge\Clip
 
 ## Dùng chung ảnh chụp màn hình
 
-1. Cập nhật **LanBridge 0.7.1 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
+1. Cập nhật **LanBridge 0.7.2 trên cả A và B**, kết nối và bật **Clipboard chữ/ảnh/file** trên B. Chia sẻ ảnh không cần bật quyền Truyền file.
 2. Trên B nhấn **Win+Shift+S** và chọn vùng chụp, hoặc dùng **Print Screen** theo cài đặt Windows. Công cụ chụp cần đưa ảnh vào clipboard.
 3. Chờ báo **Ảnh chụp đã sẵn sàng**, chuyển về A và **Ctrl+V** trong Paint, Word hoặc ứng dụng chat hỗ trợ dán ảnh. Chiều A → B dùng cùng cách.
 
@@ -219,7 +225,7 @@ pwsh -File .\scripts\build.ps1 -Task Installer
 
 `Publish` tạo bản chạy độc lập và ZIP; `Installer` xuất bản rồi tạo bộ cài EXE cùng file SHA-256 cho cả ZIP/EXE. Script chuẩn bị compiler tải [Inno Setup 6.7.4 chính thức](https://github.com/jrsoftware/issrc/releases/tag/is-6_7_4), kiểm tra SHA-256 và chữ ký nhà phát hành, rồi đặt bản portable trong `.tools`. Có thể gọi `scripts/build-installer.ps1 -CompilerPath C:\duong-dan\ISCC.exe` sau khi đã Publish. Script Inno Setup nằm ở `installer/LanBridge.iss`.
 
-Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.7.1-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
+Hoặc chạy `dotnet run --project src/LanBridge.csproj`. Bản phát hành ở `release/LanBridge-0.7.2-win-x64/LanBridge.exe`; bản này chưa được ký chứng chỉ phát hành.
 
 `dotnet run --project src/LanBridge.csproj -- --preview` chỉ mở giao diện, không bật hook hay lắng nghe cổng. Có thể thêm `--preview-output C:\duong-dan\preview.png` để xuất hình rồi tự đóng.
 

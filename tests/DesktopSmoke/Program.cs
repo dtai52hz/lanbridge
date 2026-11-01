@@ -273,11 +273,16 @@ internal static class Program
                 "The minimum window must leave room to read the chosen typing mode and recovery action.");
             composer.Process('a'); composer.Process('a');
             Get<HashSet<int>>(input, "_textKeys").Add(0x41);
+            await (Task<bool>)Call(input, "RoutePhysicalKeyForTestingAsync", 0xA2, true, 0x1D, false)!;
+            Check(((System.Collections.IDictionary)Get<object>(input, "_physicalKeys")).Contains(0xA2),
+                "The recovery UI check must start with a cached Ctrl whose release was missed.");
             Check(composer.CurrentWord == "â", "The same-mode recovery check did not prepare an unfinished Telex word.");
 
             await (Task)Call(form, "ResetTypingFromUiAsync")!;
             Check(composer.CurrentWord.Length == 0 && Get<HashSet<int>>(input, "_textKeys").Count == 0,
                 "Resetting an already selected Telex mode must still clear its unfinished word and text-key bookkeeping.");
+            Check(((System.Collections.IDictionary)Get<object>(input, "_physicalKeys")).Count == 0,
+                "The UI recovery action must clear stale Ctrl state instead of only resetting the composer.");
             Check(input.TypingMode == TypingMode.VietnameseTelex && typing.SelectedIndex == (int)TypingMode.VietnameseTelex,
                 "Typing recovery changed the selected mode instead of reapplying it.");
             Check(reset.Enabled && !Get<bool>(form, "_resettingTyping"),

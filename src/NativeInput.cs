@@ -47,6 +47,9 @@ public sealed class InputRouter : IDisposable
         Interlocked.Read(ref _printableTranslationFailures), Interlocked.Read(ref _printableFallbacks),
         Interlocked.Read(ref _physicalModeKeyDowns), Interlocked.Read(ref _shortcutBypassKeyDowns), Interlocked.Read(ref _incomingTextPackets),
         Interlocked.Read(ref _incomingNonAsciiCodeUnits));
+    /// <summary>Hook maintenance counts only; does not retain keys, text or document content.</summary>
+    public KeyboardHookDiagnosticsSnapshot GetKeyboardHookDiagnosticsSnapshot() =>
+        _keyboardHooks?.Snapshot(_keyboardRefreshRequested) ?? new(0, 0, 0, -1, _keyboardRefreshRequested);
     public bool IsRemote => _remote;
     public bool IsController
     {
@@ -104,10 +107,47 @@ public sealed class InputRouter : IDisposable
         }, CancellationToken.None);
     }
 
+    /// <summary>
+    /// Explicit recovery after input capture was interrupted. Returns control to A and
+    /// abandons old physical-chord tracking; the user must release held keys/buttons.
+    /// Ordinary reset/return paths deliberately preserve genuinely held physical keys.
+    /// </summary>
+    public Task RecoverTypingAsync(TypingMode mode)
+    {
+        if (!Enum.IsDefined(mode)) throw new ArgumentOutOfRangeException(nameof(mode));
+        return OnOwnerAsync(() =>
+        {
+            ReleaseCore(true);
+            _composer.Mode = mode; _composer.Reset(); _textKeys.Clear();
+            _physicalKeys.Clear(); _physicalButtons.Clear();
+            // Already-consumed switch components must stay owned until their actual up;
+            // abandoning tracking must not leak an auto-repeat or trailing up locally.
+            _emergencyChord = false;
+            _textCapsLock = (GetKeyState(0x14) & 1) != 0;
+            _lastKeyboardActivityAt = KeyboardClockMilliseconds();
+            _keyboardRefreshRequested = true;
+            LastError = null;
+            // Explicit user recovery also repairs a hook Windows silently removed, so
+            // F9 can work again while local. Automatic maintenance remains remote-A only.
+            if (_started && _controller && _keyboardHooks is not null)
+                RenewKeyboardHook(_lastKeyboardActivityAt);
+        }, CancellationToken.None);
+    }
+
     private volatile bool _controller, _allowed, _remote, _blockLocal, _disposed, _started;
     private Action<Packet>? _send;
-    private IntPtr _mouseHook, _keyboardHook;
-    private readonly HookProc _mouseProc, _keyboardProc;
+    private IntPtr _mouseHook;
+    // Native-only diagnostic mirror for inert preview tests. Lease owns lifetime.
+    private IntPtr _keyboardHook;
+    private readonly HookProc _mouseProc;
+    private KeyboardHookLease? _keyboardHooks;
+    private volatile bool _keyboardRefreshRequested;
+    private long _lastKeyboardActivityAt, _lastKeyboardRenewalAttemptAt;
+    private bool _keyboardRenewalAttempted;
+    private bool _keyboardRenewalFailed;
+    private const int KeyboardRenewalIntervalMilliseconds = 10_000;
+    private const int KeyboardRenewalQuietMilliseconds = 150;
+    private const int KeyboardRenewalRetryMilliseconds = 1_000;
     private SynchronizationContext? _context;
     private int _ownerThread;
     private readonly object _lifecycle = new();
@@ -169,7 +209,6 @@ public sealed class InputRouter : IDisposable
     public InputRouter()
     {
         _mouseProc = MouseHook;
-        _keyboardProc = KeyboardHook;
     }
 
     public void Start() => StartDispatcher(true);
@@ -184,6 +223,12 @@ public sealed class InputRouter : IDisposable
     internal Action? NativeWorkQueuedForTesting { get; set; }
     // The override cannot affect a native-enabled router and never installs hooks or injects input.
     internal Func<int, int, (int Length, string Text)>? PrintableTranslationForTesting { get; set; }
+    internal KeyboardHookTestApi? KeyboardHooksForTesting { get; set; }
+    internal Task MaintainKeyboardHookForTestingAsync()
+    {
+        if (_nativeInputEnabled) throw new InvalidOperationException("Hook-maintenance tests require a native-disabled router.");
+        return OnOwnerAsync(MaintainKeyboardHook, CancellationToken.None);
+    }
     internal Task InvokeForTestingAsync(Action action) => OnOwnerAsync(action, CancellationToken.None);
     internal async Task<bool> RoutePhysicalKeyForTestingAsync(int key, bool down, int scan = 0, bool extended = false)
     {
@@ -271,7 +316,18 @@ public sealed class InputRouter : IDisposable
                 ArmMoveTimer();
             });
         }, null, Timeout.Infinite, Timeout.Infinite);
-        if (!nativeInputEnabled) { _started = true; return; }
+        if (!nativeInputEnabled)
+        {
+            if (KeyboardHooksForTesting is { } api)
+            {
+                _keyboardHooks = new(callback => api.Install(callback.Invoke), api.Uninstall,
+                    KeyboardHook, (code, wParam, lParam) => api.Next(code, wParam, lParam), api.ClockMilliseconds);
+                if (!_keyboardHooks.TryRenew()) throw new InvalidOperationException("The fake keyboard hook could not be installed.");
+                _lastKeyboardActivityAt = _lastKeyboardRenewalAttemptAt = api.ClockMilliseconds();
+                _keyboardRenewalAttempted = true;
+            }
+            _started = true; return;
+        }
         // Remember modifiers already held when the visible application enables the hooks.
         foreach (var vk in new[] { 0xA0, 0xA1, 0xA2, 0xA3, 0xA4, 0xA5, 0x5B, 0x5C })
             if ((GetAsyncKeyState(vk) & 0x8000) != 0)
@@ -279,14 +335,18 @@ public sealed class InputRouter : IDisposable
         var module = GetModuleHandle(null);
         _mouseHook = SetWindowsHookEx(14, _mouseProc, module, 0);
         if (_mouseHook == IntPtr.Zero) throw new Win32Exception(Marshal.GetLastWin32Error(), "Không thể theo dõi chuột Windows.");
-        _keyboardHook = SetWindowsHookEx(13, _keyboardProc, module, 0);
-        if (_keyboardHook == IntPtr.Zero)
+        _keyboardHooks = new(callback => SetWindowsKeyboardHookEx(13, callback, module, 0), UninstallKeyboardHook,
+            KeyboardHook, (code, wParam, lParam) => CallNextHookEx(IntPtr.Zero, code, wParam, lParam), PointerClockMilliseconds);
+        if (!_keyboardHooks.TryRenew())
         {
             var error = Marshal.GetLastWin32Error();
             UnhookWindowsHookEx(_mouseHook);
             _mouseHook = IntPtr.Zero;
             throw new Win32Exception(error, "Không thể theo dõi bàn phím Windows.");
         }
+        _keyboardHook = _keyboardHooks.ActiveHandle;
+        _lastKeyboardActivityAt = _lastKeyboardRenewalAttemptAt = KeyboardClockMilliseconds();
+        _keyboardRenewalAttempted = true;
         _started = true;
         _timer = new System.Windows.Forms.Timer { Interval = 40 };
         _timer.Tick += TimerTick;
@@ -576,9 +636,49 @@ public sealed class InputRouter : IDisposable
         InjectAbsolute(_lastNormX, _lastNormY);
     }
 
+    private long KeyboardClockMilliseconds() => !_nativeInputEnabled && KeyboardHooksForTesting is { } api
+        ? api.ClockMilliseconds() : PointerClockMilliseconds();
+
+    private void MaintainKeyboardHook()
+    {
+        if (_disposed || !_started || _keyboardHooks is null) return;
+        _keyboardHooks.CollectCompletedCallbacks();
+        if (!_controller || !_remote) return;
+        long now = KeyboardClockMilliseconds();
+        if (_keyboardRenewalFailed && now - _lastKeyboardRenewalAttemptAt < KeyboardRenewalRetryMilliseconds) return;
+        if (!_keyboardRefreshRequested && _keyboardRenewalAttempted &&
+            now - _lastKeyboardRenewalAttemptAt < KeyboardRenewalIntervalMilliseconds) return;
+        if ((!_keyboardRefreshRequested && now - _lastKeyboardActivityAt < KeyboardRenewalQuietMilliseconds) ||
+            _physicalKeys.Count != 0 || _physicalButtons.Count != 0 || _sentKeys.Count != 0 ||
+            _sentButtons.Count != 0 || _textKeys.Count != 0 || _switchConsumedKeys.Count != 0) return;
+        RenewKeyboardHook(now);
+    }
+
+    private void RenewKeyboardHook(long now)
+    {
+        if (_keyboardHooks is null) return;
+        _lastKeyboardRenewalAttemptAt = now;
+        _keyboardRenewalAttempted = true;
+        // Replacement preserves all routing/composer/native FIFO state. If installation
+        // fails, the previous active registration stays installed and is retried later.
+        _keyboardRenewalFailed = !_keyboardHooks.TryRenew();
+        if (_nativeInputEnabled) _keyboardHook = _keyboardHooks.ActiveHandle;
+        _keyboardRefreshRequested = _keyboardRenewalFailed;
+    }
+
+    private static bool UninstallKeyboardHook(IntPtr handle)
+    {
+        if (UnhookWindowsHookEx(handle)) return true;
+        int error = Marshal.GetLastWin32Error();
+        // Windows can silently remove a timed-out low-level hook. Its stale handle
+        // is already absent, so it must not permanently block later replacements.
+        return error is 1404 or 1431; // ERROR_INVALID_HOOK_HANDLE / ERROR_HOOK_NOT_INSTALLED
+    }
+
     private void TimerTick(object? sender, EventArgs args)
     {
         if (_disposed) return;
+        MaintainKeyboardHook();
         var now = Environment.TickCount64;
         if (now - _boundsReadAt > 2000)
         {
@@ -643,6 +743,8 @@ public sealed class InputRouter : IDisposable
         _anchor = new(screen.Left + screen.Width / 2, screen.Top + screen.Height / 2);
         WarpLocal(_anchor);
         NotifyRemoteChanged(true);
+        _keyboardRefreshRequested = true;
+        MaintainKeyboardHook();
     }
 
     private IntPtr MouseHook(int code, IntPtr message, IntPtr data)
@@ -674,6 +776,7 @@ public sealed class InputRouter : IDisposable
             }
             else if (TryButton(msg, item.MouseData, out var button, out var down))
             {
+                _lastKeyboardActivityAt = KeyboardClockMilliseconds();
                 if (down) _physicalButtons.Add(button); else _physicalButtons.Remove(button);
                 if (_controller && _remote)
                 {
@@ -750,35 +853,44 @@ public sealed class InputRouter : IDisposable
 
     private IntPtr KeyboardHook(int code, IntPtr message, IntPtr data)
     {
-        if (code < 0 || _disposed) return CallNextHookEx(_keyboardHook, code, message, data);
+        if (code < 0 || _disposed) return NextKeyboardHook(code, message, data);
         long callbackAt = _diagnostics.BeginHookCallback();
         try
         {
             var item = Marshal.PtrToStructure<KeyboardHookData>(data);
             _diagnostics.RecordHookEventArrival(item.Flags, 0x10, item.ExtraInfo.ToUInt64(), item.Time);
             if ((item.Flags & 0x10) != 0 || item.ExtraInfo.ToUInt64() == InjectionTag)
-                return CallNextHookEx(_keyboardHook, code, message, data);
+                return NextKeyboardHook(code, message, data);
             var msg = message.ToInt32();
             if (msg is not (0x0100 or 0x0101 or 0x0104 or 0x0105))
-                return CallNextHookEx(_keyboardHook, code, message, data);
+                return NextKeyboardHook(code, message, data);
             bool down = msg is 0x0100 or 0x0104;
             var key = new KeyStroke((int)item.VkCode, (int)(item.ScanCode & 0xff), (item.Flags & 1) != 0);
-            if (ProcessPhysicalKey(key, down)) return new IntPtr(1);
-            return CallNextHookEx(_keyboardHook, code, message, data);
+            bool consumed = ProcessPhysicalKey(key, down);
+            // An explicit entry/recovery request must precede the first quickly typed
+            // letter. Waiting for a posted timer can let a newer IME consume that letter.
+            // The lease retains this old callback until it has fully returned.
+            if (!down && _keyboardRefreshRequested) MaintainKeyboardHook();
+            if (consumed) return new IntPtr(1);
+            return NextKeyboardHook(code, message, data);
         }
         catch (Exception error)
         {
             RecoverHookError(error);
-            return CallNextHookEx(_keyboardHook, code, message, data);
+            return NextKeyboardHook(code, message, data);
         }
         finally { _diagnostics.EndHookCallback(callbackAt); }
     }
+
+    private IntPtr NextKeyboardHook(int code, IntPtr message, IntPtr data) =>
+        _keyboardHooks?.PassThrough(code, message, data) ?? CallNextHookEx(IntPtr.Zero, code, message, data);
 
     private bool HasPhysical(int generic, int left, int right) =>
         _physicalKeys.ContainsKey(generic) || _physicalKeys.ContainsKey(left) || _physicalKeys.ContainsKey(right);
 
     private bool ProcessPhysicalKey(KeyStroke key, bool down)
     {
+        _lastKeyboardActivityAt = KeyboardClockMilliseconds();
         bool repeat = _physicalKeys.ContainsKey(key.Key);
         if (down) _physicalKeys[key.Key] = key; else _physicalKeys.Remove(key.Key);
         bool control = HasPhysical(0x11, 0xA2, 0xA3), alt = HasPhysical(0x12, 0xA4, 0xA5);
@@ -1563,10 +1675,11 @@ public sealed class InputRouter : IDisposable
         _timer?.Dispose();
         _timer = null;
         if (_mouseHook != IntPtr.Zero) UnhookWindowsHookEx(_mouseHook);
-        if (_keyboardHook != IntPtr.Zero) UnhookWindowsHookEx(_keyboardHook);
-        _mouseHook = _keyboardHook = IntPtr.Zero;
+        _keyboardHooks?.Dispose();
+        _keyboardHooks = null;
+        _mouseHook = IntPtr.Zero;
+        _keyboardHook = IntPtr.Zero;
         GC.KeepAlive(_mouseProc);
-        GC.KeepAlive(_keyboardProc);
     }
 
     private delegate IntPtr HookProc(int code, IntPtr wParam, IntPtr lParam);
@@ -1584,6 +1697,7 @@ public sealed class InputRouter : IDisposable
     { public ushort Vk, Scan; public uint Flags, Time; public UIntPtr ExtraInfo; }
 
     [DllImport("user32.dll", SetLastError = true)] private static extern IntPtr SetWindowsHookEx(int idHook, HookProc callback, IntPtr module, uint threadId);
+    [DllImport("user32.dll", EntryPoint = "SetWindowsHookExW", SetLastError = true)] private static extern IntPtr SetWindowsKeyboardHookEx(int idHook, KeyboardHookCallback callback, IntPtr module, uint threadId);
     [DllImport("user32.dll", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool UnhookWindowsHookEx(IntPtr hook);
     [DllImport("user32.dll")] private static extern IntPtr CallNextHookEx(IntPtr hook, int code, IntPtr wParam, IntPtr lParam);
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, [In] NativeInput[] inputs, int size);
