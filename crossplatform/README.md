@@ -2,11 +2,11 @@
 
 Bản desktop đa nền tảng cho **Windows, macOS và Linux X11**: mỗi máy giữ màn hình riêng, dùng chung chuột/bàn phím trong mạng LAN. Máy nhận phải đồng ý kết nối. Phiên dùng TLS và chứng chỉ được ghim theo thiết bị/mã ghép nối, cùng giao thức của LanBridge Windows 0.7.x.
 
-Đây là **preview riêng**, không thay bản Windows 0.7.1 ổn định. Chưa hỗ trợ Linux Wayland, Android, iOS hoặc mọi biến thể/hệ điều hành khác. Biên dịch được không đồng nghĩa đã kiểm chứng chuột/phím trên tất cả máy thật.
+Đây là **preview riêng**, không thay bản Windows 0.7.2 ổn định. Chưa hỗ trợ Linux Wayland, Android, iOS hoặc mọi biến thể/hệ điều hành khác. Biên dịch được không đồng nghĩa đã kiểm chứng chuột/phím trên tất cả máy thật.
 
 ## Tải và chọn bản
 
-[GitHub Releases desktop preview](https://github.com/dtai52hz/lanbridge/releases/tag/v0.8.0-preview.1)
+[Trang Releases chung cho Windows, macOS và Linux](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2). Các gói Desktop giữ nguyên phiên bản `0.8.0-preview.1`, tên file và SHA-256; có thể đối chiếu tại [release preview gốc và tag nguồn](https://github.com/dtai52hz/lanbridge/releases/tag/v0.8.0-preview.1). Bản sửa kênh gõ tiếng Việt của ứng dụng Windows 0.7.2 chưa được chuyển sang Desktop preview.
 
 | Máy | Gói |
 | --- | --- |
@@ -18,7 +18,7 @@ Bản desktop đa nền tảng cho **Windows, macOS và Linux X11**: mỗi máy 
 
 Các gói chứa sẵn .NET; không cần cài runtime riêng. Giữ toàn bộ thư mục đã giải nén, gồm thư viện native. Mỗi gói có file SHA-256 bên cạnh.
 
-**Windows:** đóng LanBridge cũ trước, giải nén ZIP rồi mở `LanBridge.Desktop.exe`. Bản Windows 0.7.1 vẫn có [bộ cài riêng](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.1) và đầy đủ các tính năng Windows trước đây.
+**Windows:** đóng LanBridge cũ trước, giải nén ZIP rồi mở `LanBridge.Desktop.exe`. Bản Windows 0.7.2 có [bộ cài EXE tại cùng trang tải](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2) và đầy đủ các tính năng Windows trước đây.
 
 **macOS 14 trở lên:** giải nén rồi kéo `.app` vào Applications. Gói dùng chữ ký ad-hoc, chưa có chữ ký Developer ID/notarization. Nếu macOS chặn lần mở đầu, mở **System Settings → Privacy & Security** và kiểm tra mục cho phép mở ứng dụng vừa tải. Cấp quyền cho LanBridge trong **Privacy & Security → Accessibility** và **Input Monitoring** nếu hệ điều hành yêu cầu, rồi mở lại/kết nối lại. Ứng dụng không tự cấp hoặc vượt các quyền này.
 
@@ -62,7 +62,7 @@ Nếu discovery bị chặn, **Chép mã máy này** trên B rồi dán vào **K
 
 Trên Mac, Command được gửi như Win/Super; Control vẫn là Control. Preview giữ phím vật lý, chưa tự đổi mọi phím tắt giữa quy ước macOS và Windows. Ví dụ điều khiển Windows từ Mac, dùng Control+C cho lệnh Ctrl+C của Windows.
 
-Linux X11 không có API nhập Unicode trực tiếp tương đương Windows/macOS. SharpHook ánh xạ keycode rồi gửi phím; độ trễ mặc định khoảng 50 ms mỗi ký tự và phụ thuộc ứng dụng nhận. Vì vậy gõ tiếng Việt nhanh có thể chậm trên B Linux. Chưa đánh đồng chất lượng này với đường nhập Windows 0.7.1. Đây là giới hạn đã biết của preview.
+Linux X11 không có API nhập Unicode trực tiếp tương đương Windows/macOS. SharpHook ánh xạ keycode rồi gửi phím; độ trễ mặc định khoảng 50 ms mỗi ký tự và phụ thuộc ứng dụng nhận. Vì vậy gõ tiếng Việt nhanh có thể chậm trên B Linux. Chưa đánh đồng chất lượng này với đường nhập Windows 0.7.2. Đây là giới hạn đã biết của preview.
 
 ## Kiểm tra và giới hạn
 

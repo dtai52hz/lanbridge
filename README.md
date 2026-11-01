@@ -1,8 +1,15 @@
 # LanBridge · Windows / macOS / Linux
 
-**Bản đa nền tảng mới: [Tải LanBridge Desktop 0.8.0-preview.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.8.0-preview.1)** — có gói Windows, macOS Intel/Apple Silicon và Linux X11 x64/ARM64. Mở **Assets** trong trang phát hành để chọn gói phù hợp. Đây là pre-release; mục Latest của GitHub dành cho bản Windows ổn định.
+**[Tải LanBridge cho Windows, macOS và Linux tại trang Releases chung](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.2)**. Mở **Assets** hoặc chọn liên kết trong bảng tải trên trang phát hành.
 
-[Mã nguồn đa nền tảng](crossplatform/) · [Hướng dẫn desktop preview](crossplatform/README.md). Preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ và gửi file thủ công. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview; bản Windows 0.7.2 bên dưới là bản ổn định hiện hành.
+| Máy | Gói nên chọn |
+| --- | --- |
+| Windows 10/11 x64 | `LanBridge-0.7.2-Setup-x64.exe` để cài, hoặc `LanBridge-0.7.2-Windows-x64.zip` để chạy trực tiếp |
+| Mac Apple Silicon / Mac Intel, macOS 14+ | Desktop `0.8.0-preview.1`, chọn `osx-arm64` / `osx-x64` |
+| Linux X11 x64 / ARM64 | Desktop `0.8.0-preview.1`, chọn `linux-x64` / `linux-arm64` |
+| Windows x64, thử giao diện đa nền tảng | `LanBridge-Desktop-0.8.0-preview.1-win-x64.zip` |
+
+Trang tải chung giữ phiên bản riêng của từng gói: **Windows 0.7.2** có bản sửa kênh gõ tiếng Việt; **Desktop 0.8.0-preview.1** giữ nguyên các gói preview đã phát hành, chưa có bản sửa này. [Mã nguồn đa nền tảng](crossplatform/) · [Hướng dẫn desktop preview](crossplatform/README.md) · [Tag nguồn của các gói preview](https://github.com/dtai52hz/lanbridge/tree/v0.8.0-preview.1). Preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ và gửi file thủ công. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview.
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: dùng chuột và bàn phím của A trên máy B bằng cách đưa chuột qua mép màn hình hoặc nhấn phím chuyển do bạn gán. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
