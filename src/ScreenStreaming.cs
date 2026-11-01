@@ -13,6 +13,7 @@ public sealed class ScreenStreamingSession : IDisposable
     readonly PeerConnection _peer;
     readonly Func<CancellationToken, Task<ScreenFrame>> _capture;
     readonly Func<Packet, Task> _sendFrame;
+    readonly TimeProvider _time;
     readonly object _gate = new();
     // Do not dispose this while a stopped native capture/write can still return.
     // Every generation shares it, including after an OFF followed immediately by ON.
@@ -20,17 +21,21 @@ public sealed class ScreenStreamingSession : IDisposable
     CancellationTokenSource? _stream;
     bool _permission, _disposed;
     long _generation;
+    int _waitingCaptures;
+    internal int WaitingCaptureCount => Volatile.Read(ref _waitingCaptures);
     public event Action<string>? Error;
     public event Action<bool>? StateChanged;
 
     public ScreenStreamingSession(PeerConnection peer, Func<CancellationToken, Task<ScreenFrame>> capture)
         : this(peer, capture, packet => peer.SendAsync(packet)) { }
 
-    internal ScreenStreamingSession(PeerConnection peer, Func<CancellationToken, Task<ScreenFrame>> capture, Func<Packet, Task> sendFrame)
+    internal ScreenStreamingSession(PeerConnection peer, Func<CancellationToken, Task<ScreenFrame>> capture, Func<Packet, Task> sendFrame,
+        TimeProvider? time = null)
     {
         _peer = peer ?? throw new ArgumentNullException(nameof(peer));
         _capture = capture ?? throw new ArgumentNullException(nameof(capture));
         _sendFrame = sendFrame ?? throw new ArgumentNullException(nameof(sendFrame));
+        _time = time ?? TimeProvider.System;
         _peer.Closed += PeerClosed;
     }
 
@@ -86,8 +91,13 @@ public sealed class ScreenStreamingSession : IDisposable
         {
             while (!token.IsCancellationRequested)
             {
-                long started = System.Diagnostics.Stopwatch.GetTimestamp();
-                await _captureWrite.WaitAsync(token).ConfigureAwait(false);
+                Interlocked.Increment(ref _waitingCaptures);
+                try { await _captureWrite.WaitAsync(token).ConfigureAwait(false); }
+                finally { Interlocked.Decrement(ref _waitingCaptures); }
+                // A previous generation may still own a non-cancellable capture/write.
+                // Start this frame's cadence after that wait so restarting cannot
+                // consume the entire interval and immediately burst a second frame.
+                long started = _time.GetTimestamp();
                 try
                 {
                     lock (_gate) if (!IsCurrent(source, generation)) return;
@@ -107,8 +117,8 @@ public sealed class ScreenStreamingSession : IDisposable
                     await write.ConfigureAwait(false);
                 }
                 finally { _captureWrite.Release(); }
-                var remaining = TimeSpan.FromMilliseconds(200) - System.Diagnostics.Stopwatch.GetElapsedTime(started);
-                if (remaining > TimeSpan.Zero) await Task.Delay(remaining, token).ConfigureAwait(false);
+                var remaining = TimeSpan.FromMilliseconds(200) - _time.GetElapsedTime(started);
+                if (remaining > TimeSpan.Zero) await Task.Delay(remaining, _time, token).ConfigureAwait(false);
             }
         }
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }

@@ -57,6 +57,8 @@ for (int repeat = 0; repeat < 24; repeat++)
 {
     int captures = 0, active = 0, maximumActive = 0, writes = 0;
     var firstCapture = new TaskCompletionSource<ScreenFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var freshWriteEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var freshWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     async Task<ScreenFrame> Capture(CancellationToken token)
     {
         int running = Interlocked.Increment(ref active);
@@ -67,7 +69,12 @@ for (int repeat = 0; repeat < 24; repeat++)
         try { return number == 1 ? await firstCapture.Task : frame; }
         finally { Interlocked.Decrement(ref active); }
     }
-    using var session = new ScreenStreamingSession(host, Capture, _ => { Interlocked.Increment(ref writes); return Task.CompletedTask; });
+    using var session = new ScreenStreamingSession(host, Capture, _ =>
+    {
+        Interlocked.Increment(ref writes);
+        freshWriteEntered.TrySetResult();
+        return freshWriteCompleted.Task;
+    });
     session.SetPermission(true);
     session.Handle(new Packet { Type = "screen-request", Allow = true });
     await Until(() => captures == 1, "The pending native capture did not start.");
@@ -80,9 +87,11 @@ for (int repeat = 0; repeat < 24; repeat++)
     Check(captures == 1 && active == 1 && writes == 0,
         "A restarted stream overlapped or transmitted an old noncancellable native capture.");
     firstCapture.SetResult(frame);
-    await Until(() => writes == 1, "The fresh stream did not continue after the old native capture returned.");
+    await freshWriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     session.Handle(new Packet { Type = "screen-request", Allow = false });
-    Check(captures == 2 && maximumActive == 1, "Rapid restarts created concurrent captures or revived stale generations.");
+    Check(captures == 2 && writes == 1 && maximumActive == 1,
+        "Rapid restarts created concurrent captures/writes or revived stale generations.");
+    freshWriteCompleted.SetResult();
     await Task.Delay(230);
     Check(writes == 1, "A stopped generation continued writing frames.");
 }
@@ -92,8 +101,15 @@ for (int repeat = 0; repeat < 24; repeat++)
 {
     int captures = 0, writes = 0;
     var firstWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondWriteEntered = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondWriteCompleted = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
     using var session = new ScreenStreamingSession(host, _ => { Interlocked.Increment(ref captures); return Task.FromResult(frame); },
-        _ => Interlocked.Increment(ref writes) == 1 ? firstWrite.Task : Task.CompletedTask);
+        _ =>
+        {
+            if (Interlocked.Increment(ref writes) == 1) return firstWrite.Task;
+            secondWriteEntered.TrySetResult();
+            return secondWriteCompleted.Task;
+        });
     session.SetPermission(true);
     session.Handle(new Packet { Type = "screen-request", Allow = true });
     await Until(() => writes == 1, "The fake actual TLS write did not begin.");
@@ -105,10 +121,54 @@ for (int repeat = 0; repeat < 24; repeat++)
     await Task.Delay(80);
     Check(captures == 1 && writes == 1, "Cancellation released a still-pending actual write and allowed queued screen backlog.");
     firstWrite.SetResult();
-    await Until(() => writes == 2, "The latest generation did not resume after the real write completed.");
+    await secondWriteEntered.Task.WaitAsync(TimeSpan.FromSeconds(5));
     session.Handle(new Packet { Type = "screen-request", Allow = false });
+    Check(captures == 2 && writes == 2, "The latest generation did not resume after the actual write completed.");
+    secondWriteCompleted.SetResult();
     await Task.Delay(230);
     Check(captures == 2 && writes == 2, "An old restarted writer survived its generation's stop.");
+}
+
+// The old generation holds the shared slot for 500 ms of fake time. After it
+// returns, the fresh generation must still wait its full 200 ms between frames;
+// time spent waiting for that slot must not cause a catch-up burst.
+{
+    int captures = 0, writes = 0;
+    var time = new ManualScreenTime();
+    var oldCapture = new TaskCompletionSource<ScreenFrame>(TaskCreationOptions.RunContinuationsAsynchronously);
+    var firstFreshWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var secondFreshWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    var finishSecondWrite = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+    using var session = new ScreenStreamingSession(host,
+        _ => Interlocked.Increment(ref captures) == 1 ? oldCapture.Task : Task.FromResult(frame),
+        _ =>
+        {
+            if (Interlocked.Increment(ref writes) == 1) { firstFreshWrite.TrySetResult(); return Task.CompletedTask; }
+            secondFreshWrite.TrySetResult(); return finishSecondWrite.Task;
+        }, time);
+    session.SetPermission(true);
+    session.Handle(new Packet { Type = "screen-request", Allow = true });
+    await Until(() => captures == 1, "The cadence regression did not enter its old pending capture.");
+    session.Handle(new Packet { Type = "screen-request", Allow = false });
+    session.Handle(new Packet { Type = "screen-request", Allow = true });
+    // The queue diagnostic is a synchronization barrier: the new generation is
+    // actually blocked by the old capture before its fake clock advances.
+    await Until(() => session.WaitingCaptureCount == 1, "The fresh cadence generation did not wait behind the old capture.");
+    time.Advance(TimeSpan.FromMilliseconds(500));
+    oldCapture.SetResult(frame);
+    await firstFreshWrite.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    await Until(() => time.PendingTimers == 1 || secondFreshWrite.Task.IsCompleted,
+        "The fresh frame did not reach its post-write cadence boundary.");
+    Check(!secondFreshWrite.Task.IsCompleted && time.PendingTimers == 1 && writes == 1,
+        "Waiting behind an old capture caused an immediate second-frame burst.");
+    time.Advance(TimeSpan.FromMilliseconds(199));
+    Check(!secondFreshWrite.Task.IsCompleted && captures == 2 && writes == 1,
+        "A new frame started before the full 200 ms cadence elapsed.");
+    time.Advance(TimeSpan.FromMilliseconds(1));
+    await secondFreshWrite.Task.WaitAsync(TimeSpan.FromSeconds(5));
+    session.Handle(new Packet { Type = "screen-request", Allow = false });
+    Check(captures == 3 && writes == 2, "The fake-clock cadence did not release exactly one fresh frame at 200 ms.");
+    finishSecondWrite.SetResult();
 }
 
 // Disposal is nonblocking with a stuck native provider, is safe when called
@@ -137,3 +197,54 @@ for (int repeat = 0; repeat < 24; repeat++)
     await Until(() => received.Any(packet => packet.Text == "after-screen-dispose"), "The shared TLS peer stopped after disposing screen viewing.");
 }
 Console.WriteLine($"Screen streaming smoke passed: {assertions} assertions; deterministic failure/restart/write/dispose races, real loopback TLS, no native capture/input.");
+
+sealed class ManualScreenTime : TimeProvider
+{
+    readonly object _gate = new();
+    readonly List<ScreenTimer> _timers = [];
+    long _ticks;
+    public override long TimestampFrequency => TimeSpan.TicksPerSecond;
+    public override long GetTimestamp() { lock (_gate) return _ticks; }
+    public override DateTimeOffset GetUtcNow() => DateTimeOffset.UnixEpoch.AddTicks(GetTimestamp());
+    public int PendingTimers { get { lock (_gate) return _timers.Count(timer => !timer.Disposed && timer.Due != long.MaxValue); } }
+    public override ITimer CreateTimer(TimerCallback callback, object? state, TimeSpan dueTime, TimeSpan period)
+    {
+        lock (_gate)
+        {
+            var timer = new ScreenTimer(this, callback, state);
+            _timers.Add(timer);
+            timer.Change(dueTime, period);
+            return timer;
+        }
+    }
+    public void Advance(TimeSpan elapsed)
+    {
+        List<ScreenTimer> due;
+        lock (_gate)
+        {
+            _ticks += elapsed.Ticks;
+            due = _timers.Where(timer => !timer.Disposed && timer.Due <= _ticks).ToList();
+            foreach (var timer in due) timer.Due = timer.Period > 0 ? _ticks + timer.Period : long.MaxValue;
+        }
+        foreach (var timer in due) timer.Callback(timer.State);
+    }
+    sealed class ScreenTimer(ManualScreenTime owner, TimerCallback callback, object? state) : ITimer
+    {
+        public readonly TimerCallback Callback = callback;
+        public readonly object? State = state;
+        public long Due = long.MaxValue, Period;
+        public bool Disposed;
+        public bool Change(TimeSpan dueTime, TimeSpan period)
+        {
+            lock (owner._gate)
+            {
+                if (Disposed) return false;
+                Due = dueTime == Timeout.InfiniteTimeSpan ? long.MaxValue : owner._ticks + dueTime.Ticks;
+                Period = period == Timeout.InfiniteTimeSpan ? 0 : period.Ticks;
+                return true;
+            }
+        }
+        public void Dispose() { lock (owner._gate) { Disposed = true; Due = long.MaxValue; } }
+        public ValueTask DisposeAsync() { Dispose(); return ValueTask.CompletedTask; }
+    }
+}
