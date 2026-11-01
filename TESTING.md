@@ -2,6 +2,16 @@
 
 Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10 SDK trên Windows.
 
+## Desktop đa nền tảng 0.8.0-preview.1
+
+Chạy `pwsh -File scripts/build-desktop.ps1 -Task Test` bằng .NET 10 SDK. Bộ này không cài hook, phát phím/chuột hoặc đọc/ghi clipboard thật: Platform.Smoke (417 assertions), Linux.Smoke (192), CrossPlatformSmoke (273), Desktop.Smoke (284), cùng TextInputSmoke, FileSmoke và TransportSmoke dùng chung.
+
+Chín cặp Windows/macOS/Linux trong Desktop.Smoke là nhãn của backend giả qua TLS localhost thật. Các kiểm tra bao phủ đồng ý kết nối, hello/quyền đúng thứ tự, từ chối gói sai, Telex/Unicode, chuyển máy, chuột, clipboard giả, SHA-256 của file và nhả đầu vào khi ngắt. Không suy ra đã thử vật lý đủ chín cặp máy.
+
+Workflow `Desktop platforms` chạy trên Windows x64, macOS Intel/ARM64 và Ubuntu x64/ARM64 rồi đóng gói tự chứa. Riêng Linux.NativeSmoke chỉ cho chạy khi là Linux, GitHub Actions, có cờ cô lập và Xvfb `:99`; từ chối trên desktop người dùng. Bài này thử X11/XTEST thật, Unicode, cuộn, grab/rollback/nhả và bỏ sự kiện giả lập. Nó không tạo thiết bị vật lý hoặc chứng minh tương thích mọi compositor/ứng dụng.
+
+macOS native cần thử trên máy Mac đã cấp Accessibility/Input Monitoring; Linux Wayland chưa hỗ trợ. Xem [hướng dẫn và giới hạn desktop preview](crossplatform/README.md).
+
 ## Bộ cài Windows 0.7.1
 
 ```powershell

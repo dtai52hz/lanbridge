@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <InternalsVisibleTo Include="LanBridge.Platform.Smoke" />
+    <ProjectReference Include="../LanBridge.Shared/LanBridge.Shared.csproj" />
+    <PackageReference Include="SharpHook" Version="8.0.1" />
+  </ItemGroup>
+</Project>

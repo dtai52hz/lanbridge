@@ -8,7 +8,28 @@ try
 {
     foreach (var name in new[] { "../escape", "..\\escape", "a:b", "CON", "nul.txt", "bad.", "bad ", "COM1.exe" })
     { try { FileTransfer.SafeFileName(name); throw new Exception("Accepted unsafe filename: " + name); } catch (InvalidDataException) { } }
+    // Unix permits most of these locally; accepting them on the wire would make the same
+    // file offer behave differently on Linux/macOS and Windows (including ADS-like colons).
+    var incompatibleNames = "\\/:*?\"<>|".Select(character => "bad" + character + "name.txt")
+        .Concat(Enumerable.Range(0, 32).Select(value => "bad" + (char)value + "name.txt")).ToArray();
+    foreach (string name in incompatibleNames)
+    { try { FileTransfer.SafeFileName(name); throw new Exception("Accepted incompatible wire filename."); } catch (InvalidDataException) { } }
     Assert(FileTransfer.SafeFileName("Tiếng Việt.txt") == "Tiếng Việt.txt", "Unicode filename");
+    Assert(FileTransfer.SafeFileName("Ảnh (bản sao) + 100%.txt") == "Ảnh (bản sao) + 100%.txt", "Valid Unicode punctuation filename is unchanged");
+    string guardedDirectory = Path.Combine(root, "rejected-offers");
+    Packet? guardedResponse = null;
+    using (var guardedReceiver = new FileTransfer(guardedDirectory,
+        packet => { guardedResponse = packet; return Task.CompletedTask; }, logs.Add))
+    {
+        foreach (string name in incompatibleNames)
+        {
+            string offerId = Guid.NewGuid().ToString("N");
+            await guardedReceiver.HandleAsync(new Packet { Type = "file-offer", Id = offerId, Name = name, Length = 1 }, true);
+            Assert(guardedResponse is { Type: "file-accept", Allow: false } && guardedResponse.Id == offerId,
+                "Receiver explicitly declines an incompatible filename");
+            Assert(!Directory.Exists(guardedDirectory), "Invalid remote filename creates no receive directory or partial file");
+        }
+    }
     FileTransfer? sender = null, receiver = null;
     sender = new FileTransfer(Path.Combine(root, "sender"), p => receiver!.HandleAsync(p, true), logs.Add);
     receiver = new FileTransfer(Path.Combine(root, "received"), p => sender!.HandleAsync(p, true), logs.Add);
@@ -58,7 +79,7 @@ try
         Assert(heldReceipt != null && !transfer.IsCompleted, "sender waits for receiver receipt");
         await ackSender.HandleAsync(heldReceipt!, true); await transfer;
     }
-    Console.WriteLine("PASS file transfers: Unicode, binary, SHA256, empty file, no overwrite, path validation, tamper/size rejection, permission denial, concurrent cancellation and final receipt.");
+    Console.WriteLine("PASS file transfers: Unicode, binary, SHA256, empty file, no overwrite, portable filename validation/remote rejection, tamper/size rejection, permission denial, concurrent cancellation and final receipt.");
 }
 finally { Directory.Delete(root, true); }
 

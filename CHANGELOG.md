@@ -1,3 +1,11 @@
+# 0.8.0-preview.1 — Desktop đa nền tảng
+
+- Thêm ứng dụng Avalonia riêng cho Windows x64, macOS Intel/Apple Silicon và Linux X11 x64/ARM64. Dùng chung TLS, ghim chứng chỉ, discovery và xác nhận kết nối; không thay đổi đường nhập của Windows 0.7.1 ổn định.
+- Thêm backend chuột/phím theo hệ điều hành, chuyển mép/F9, Ctrl + Alt + F12, Telex/VNI, chat, clipboard chữ tùy chọn và gửi file thủ công có SHA-256. Nhả phím/nút khi ngắt hoặc thu hồi quyền; bỏ công việc của phiên cũ và giới hạn hàng đợi.
+- Linux dùng XInput2/XTEST và grab X11; từ chối Wayland/XWayland. macOS yêu cầu quyền Accessibility/Input Monitoring. Preview chưa chuyển các tính năng media, clipboard ảnh/file tự động, khay và nhớ thiết lập của Windows.
+- Bổ sung kiểm tra giao thức chín cặp nhãn hệ điều hành qua TLS thật với backend giả, giao diện headless, CI năm kiến trúc và bài native Linux trong Xvfb cô lập. Các kiểm tra này không thay thế thử trên máy Mac/Linux thật đã được cấp quyền.
+- Gói tự chứa .NET, giữ thư viện native riêng và kèm giấy phép/nguồn libuiohook tương ứng. Hướng dẫn và giới hạn tại [crossplatform/README.md](crossplatform/README.md).
+
 # 0.7.1
 
 - Giữ mạch ghép Telex/VNI khi Windows không dịch được phím Latin: dùng đường dự phòng cho A–Z, Space và số không Shift thay vì chuyển sang phím gốc rồi reset từ. Giữ nguyên bản dịch hợp lệ, không thay thế dead key, ký tự OEM hoặc tổ hợp Ctrl/Alt/Win.

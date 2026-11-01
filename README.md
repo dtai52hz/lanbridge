@@ -1,5 +1,7 @@
 # LanBridge 0.7.1
 
+**Đa nền tảng:** đang có [LanBridge Desktop 0.8.0-preview.1](crossplatform/README.md) riêng cho Windows, macOS Intel/Apple Silicon và Linux X11. Có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ và gửi file thủ công. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview; bản Windows 0.7.1 bên dưới vẫn là bản ổn định hiện hành.
+
 Ứng dụng Windows cho hai máy tính chung mạng LAN: dùng chuột và bàn phím của A trên máy B bằng cách đưa chuột qua mép màn hình hoặc nhấn phím chuyển do bạn gán. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
 [Tải bản Windows 0.7.1](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.1): chọn **LanBridge-0.7.1-Setup-x64.exe** để cài tự động, hoặc ZIP để chạy trực tiếp. Mã nguồn công khai theo [giấy phép MIT](LICENSE); có thể tải, sửa và phân phối theo điều kiện trong giấy phép.

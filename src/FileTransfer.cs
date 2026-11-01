@@ -44,6 +44,9 @@ public sealed class FileTransfer : IDisposable
     public static string SafeFileName(string? name)
     {
         if (string.IsNullOrWhiteSpace(name) || name.Length > 160 || name != Path.GetFileName(name)
+            // Peers may use different operating systems. Enforce the Windows-compatible wire
+            // filename rules on Unix too, where backslashes, colons and control bytes are legal.
+            || name.AsSpan().IndexOfAny("\\/:*?\"<>|") >= 0 || name.Any(character => character < ' ')
             || name.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 || name.EndsWith('.') || name.EndsWith(' '))
             throw new InvalidDataException("Tên file không hợp lệ.");
         var stem = name.Split('.')[0].TrimEnd(' ').ToUpperInvariant();
