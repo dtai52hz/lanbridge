@@ -46,9 +46,6 @@ jobs:
       - name: Linux native dependencies
         if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libx11-6 libxi6 libxtst6 libxt6t64 libxkbcommon0 libxinerama1 libxrandr2 libice6 libsm6 libfontconfig1 xvfb xauth
-      - name: Build and native-free tests
-        shell: pwsh
-        run: ./scripts/build-desktop.ps1 -Task Test
       - name: Isolated X11 native input smoke
         if: runner.os == 'Linux'
         shell: bash
@@ -57,6 +54,9 @@ jobs:
           export XDG_SESSION_TYPE=x11
           export LANBRIDGE_ISOLATED_NATIVE_TEST=1
           xvfb-run --server-num=99 --server-args='-screen 0 1280x720x24' dotnet run --project crossplatform/LanBridge.Linux.NativeSmoke/LanBridge.Linux.NativeSmoke.csproj -c Release
+      - name: Build and native-free tests
+        shell: pwsh
+        run: ./scripts/build-desktop.ps1 -Task Test
       - name: Publish self-contained application
         shell: pwsh
         run: ./scripts/build-desktop.ps1 -Task Publish -Runtime '${{ matrix.rid }}'
@@ -65,8 +65,13 @@ jobs:
         run: |
           $package = 'release/LanBridge-Desktop-0.8.0-preview.1-${{ matrix.rid }}'
           $executable = if ($IsWindows) { "$package/LanBridge.Desktop.exe" } else { "$package/LanBridge.Desktop" }
-          & $executable --smoke
-          if ($LASTEXITCODE -ne 0) { throw 'Published application failed smoke.' }
+          if ($IsWindows) {
+            $desktopSmoke = Start-Process -FilePath (Resolve-Path $executable) -ArgumentList '--smoke' -Wait -PassThru -WindowStyle Hidden
+            if ($desktopSmoke.ExitCode -ne 0) { throw "Published application failed smoke: $($desktopSmoke.ExitCode)." }
+          } else {
+            & $executable --smoke
+            if ($LASTEXITCODE -ne 0) { throw 'Published application failed smoke.' }
+          }
       - uses: actions/upload-artifact@v7
         with:
           name: desktop-${{ matrix.rid }}

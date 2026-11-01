@@ -50,6 +50,27 @@ Check(CanonicalKeyMap.ToSharpHookKeyCode(-1) == KeyCode.VcUndefined, "Negative k
 Check(CanonicalKeyMap.ToSharpHookKeyCode(256) == KeyCode.VcUndefined, "Outside wire virtual key range rejected");
 Check(CanonicalKeyMap.ToSharpHookKeyCode(0) == KeyCode.VcUndefined, "Undefined wire key rejected");
 
+// Injection-only X11 uses the owning backend's root bounds, independently of libuiohook's
+// XRandR cache. Validate metadata without opening a display or installing an extra hook.
+foreach (var bounds in new[] { new DesktopBounds(0, 0, 1280, 720), new(-1920, -1080, 3840, 2160),
+    new(short.MinValue, short.MinValue, 65536, 65536) })
+    Check(SharpHookInputBackend.ValidateInjectionBounds(bounds) == bounds, "Valid native screen metadata is retained");
+foreach (var bounds in new[] { new DesktopBounds(0, 0, 0, 720), new(0, 0, 1280, 0), new(0, 0, -1, 720) })
+{
+    bool rejected = false;
+    try { SharpHookInputBackend.ValidateInjectionBounds(bounds); }
+    catch (ArgumentOutOfRangeException) { rejected = true; }
+    Check(rejected, "Empty/negative screen metadata cannot initialize a simulator");
+}
+foreach (var bounds in new[] { new DesktopBounds(short.MinValue - 1, 0, 1, 1), new(0, short.MinValue - 1, 1, 1),
+    new(0, 0, 32769, 1), new(0, 0, 1, 32769), new(int.MaxValue, 0, int.MaxValue, 1) })
+{
+    bool rejected = false;
+    try { SharpHookInputBackend.ValidateInjectionBounds(bounds); }
+    catch (NotSupportedException) { rejected = true; }
+    Check(rejected, "Out-of-range screen metadata cannot overflow SharpHook coordinates");
+}
+
 var modifiers = new PhysicalModifierState();
 Check(modifiers.ObserveKey(0x41, true, EventMask.CapsLock).HasFlag(EventMask.CapsLock), "Preexisting Caps Lock state must be read before capture");
 modifiers.SetCapture(true);

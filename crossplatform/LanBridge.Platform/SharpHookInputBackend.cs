@@ -72,8 +72,11 @@ public sealed class SharpHookInputBackend : IInputBackend
         }
     }
 
-    /// <summary>For an approved session whose platform supplies its own capture backend. Installs no global hook.</summary>
-    public void StartInjectionOnly()
+    /// <summary>
+    /// For an approved session whose platform supplies its own capture backend. Installs no global hook.
+    /// X11 supplies its native root bounds because libuiohook's screen cache may be empty until XRandR changes.
+    /// </summary>
+    public void StartInjectionOnly(DesktopBounds? nativeBounds = null)
     {
         ObjectDisposedException.ThrowIf(_disposed, this);
         if (_started) return;
@@ -87,7 +90,7 @@ public sealed class SharpHookInputBackend : IInputBackend
                 throw new InvalidOperationException("macOS chưa cấp quyền Accessibility. Mở System Settings → Privacy & Security → Accessibility, cho phép LanBridge rồi kết nối lại. Không có quyền nào được tự cấp.");
         }
 
-        _bounds = ReadBounds();
+        _bounds = nativeBounds is { } supplied ? ValidateInjectionBounds(supplied) : ReadBounds();
         var position = ReadPosition();
         _lastX = position.X; _lastY = position.Y;
         _simulator = EventSimulator.Create("LanBridge");
@@ -202,16 +205,18 @@ public sealed class SharpHookInputBackend : IInputBackend
                     if (!packet.Down) _injectedKeys.Remove(key);
                     break;
                 case "button":
+                case "local-button-release":
                     var button = packet.Button switch
                     {
                         "left" => MouseButton.Button1, "right" => MouseButton.Button2, "middle" => MouseButton.Button3,
                         "x1" => MouseButton.Button4, "x2" => MouseButton.Button5, _ => MouseButton.NoButton,
                     };
                     if (button == MouseButton.NoButton) throw new InvalidDataException("Nút chuột không hợp lệ.");
-                    MoveNormalized(simulator, packet.X, packet.Y);
-                    if (packet.Down) _injectedButtons.Add(button);
-                    Check(packet.Down ? simulator.SimulateMousePress(button) : simulator.SimulateMouseRelease(button));
-                    if (!packet.Down) _injectedButtons.Remove(button);
+                    bool buttonDown = packet.Type == "button" && packet.Down;
+                    if (packet.Type == "button") MoveNormalized(simulator, packet.X, packet.Y);
+                    if (buttonDown) _injectedButtons.Add(button);
+                    Check(buttonDown ? simulator.SimulateMousePress(button) : simulator.SimulateMouseRelease(button));
+                    if (!buttonDown) _injectedButtons.Remove(button);
                     break;
                 case "wheel":
                     MoveNormalized(simulator, packet.X, packet.Y);
@@ -324,9 +329,18 @@ public sealed class SharpHookInputBackend : IInputBackend
         if (screens.Length == 0) throw new InvalidOperationException("Không đọc được kích thước màn hình hiện tại.");
         int left = screens.Min(s => (int)s.X), top = screens.Min(s => (int)s.Y);
         int right = screens.Max(s => (int)s.X + s.Width), bottom = screens.Max(s => (int)s.Y + s.Height);
-        if (left < short.MinValue || top < short.MinValue || right - 1 > short.MaxValue || bottom - 1 > short.MaxValue)
+        return ValidateInjectionBounds(new(left, top, right - left, bottom - top));
+    }
+
+    internal static DesktopBounds ValidateInjectionBounds(DesktopBounds bounds)
+    {
+        if (bounds.Width <= 0 || bounds.Height <= 0)
+            throw new ArgumentOutOfRangeException(nameof(bounds), "Kích thước màn hình phải dương.");
+        if (bounds.X < short.MinValue || bounds.Y < short.MinValue
+            || (long)bounds.X + bounds.Width - 1 > short.MaxValue
+            || (long)bounds.Y + bounds.Height - 1 > short.MaxValue)
             throw new NotSupportedException("Bố trí màn hình vượt giới hạn tọa độ 16 bit của bộ đầu vào đa nền tảng.");
-        return new(left, top, right - left, bottom - top);
+        return bounds;
     }
 
     private DesktopPoint ReadPosition()

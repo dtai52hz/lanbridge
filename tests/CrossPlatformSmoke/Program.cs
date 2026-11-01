@@ -195,10 +195,31 @@ foreach (var edge in Enum.GetValues<ScreenEdge>())
     Check(router.IsRemote && backend.Capturing && backend.Position == anchor,
         "The worker's local button-up must not move A away from its parked capture anchor.");
     Check(wire.Any(p => p.Type == "button" && p.Button == "left" && p.Down), "A held drag resumes at B after entry.");
+    Check(!wire.Any(p => p.Type == "local-button-release"), "The coordinate-free local release is never sent over the network.");
     backend.Emit(new(PhysicalInputKind.Move, anchor.X + 5, anchor.Y));
     backend.Emit(new(PhysicalInputKind.Button, Button: "left", Down: false));
     Check(router.IsRemote && wire.Last().Type == "button" && !wire.Last().Down,
         "The first post-entry physical move and button-up preserve capture and ordered drag completion.");
+}
+
+// A late native local release must preserve the pointer after an immediate return to A.
+{
+    var backend = new FakeBackend("Windows") { BlockNextKey = true };
+    await using var router = new PortableInputRouter(backend) { CanControl = true };
+    var wire = new List<Packet>(); router.Send = wire.Add; router.Start();
+    DesktopPoint original = backend.Position;
+    backend.Emit(Key(0x41)); // An existing local down creates the first queued native key-up.
+    backend.Emit(new(PhysicalInputKind.Button, Button: "left", Down: true));
+    Tap(backend, 0x78);
+    Check(backend.KeyEntered.Wait(TimeSpan.FromSeconds(3)), "Held-key release is blocked before the local button release.");
+    router.ReleaseRemote();
+    Check(!router.IsRemote && backend.Position == original, "An immediate return restores A before delayed native cleanup.");
+    backend.ContinueKey.Set();
+    await AwaitAsync(backend.FirstButtonRelease.Task);
+    await AwaitAsync(router.ResetTypingAsync(TypingMode.VietnameseTelex));
+    Check(backend.Position == original, "A delayed coordinate-free button release cannot warp A back to its old anchor.");
+    Check(backend.Injected.Any(p => p.Type == "local-button-release") && !wire.Any(p => p.Type == "local-button-release"),
+        "The delayed native button-up remains a local-only work item.");
 }
 
 // Receiver validates packet bounds and rejects synthesized emergency chords and old sessions.
@@ -215,6 +236,7 @@ foreach (var edge in Enum.GetValues<ScreenEdge>())
         new() { Type = "text", Text = "\ud800" }, new() { Type = "text", Text = "a", Dx = 129 },
         new() { Type = "text", Text = new string('a', 257) }, new() { Type = "text", Text = "\0" },
         new() { Type = "wheel", Dy = int.MaxValue }, new() { Type = "unsupported" },
+        new() { Type = "local-button-release", Button = "left" },
     }) await AwaitAsync(router.ApplyAsync(invalid, sender));
     Check(backend.Injected.Length == before, "Malformed key, Unicode, button and wheel packets never reach a native backend.");
     await router.ApplyAsync(new() { Type = "move", X = -100, Y = int.MaxValue }, sender);
@@ -458,12 +480,14 @@ sealed class FakeBackend(string name) : IInputBackend
                 if (packet.Down) _heldKeys.Add(packet.Key); else _heldKeys.Remove(packet.Key);
                 if (FailNextKey) { FailNextKey = false; throw new InvalidOperationException("Fake partial native failure."); }
             }
-            if (packet.Type == "button")
+            if (packet.Type is "button" or "local-button-release")
             {
-                if (packet.Down) _heldButtons.Add(packet.Button!); else _heldButtons.Remove(packet.Button!);
-                Position = new(Bounds.X + (int)Math.Round(packet.X * (Bounds.Width - 1d) / 65535),
-                    Bounds.Y + (int)Math.Round(packet.Y * (Bounds.Height - 1d) / 65535));
-                if (!packet.Down) FirstButtonRelease.TrySetResult();
+                bool down = packet.Type == "button" && packet.Down;
+                if (down) _heldButtons.Add(packet.Button!); else _heldButtons.Remove(packet.Button!);
+                if (packet.Type == "button")
+                    Position = new(Bounds.X + (int)Math.Round(packet.X * (Bounds.Width - 1d) / 65535),
+                        Bounds.Y + (int)Math.Round(packet.Y * (Bounds.Height - 1d) / 65535));
+                if (!down) FirstButtonRelease.TrySetResult();
             }
             if (packet.Type == "text")
             {

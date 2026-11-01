@@ -4,7 +4,7 @@ Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10
 
 ## Desktop đa nền tảng 0.8.0-preview.1
 
-Chạy `pwsh -File scripts/build-desktop.ps1 -Task Test` bằng .NET 10 SDK. Bộ này không cài hook, phát phím/chuột hoặc đọc/ghi clipboard thật: Platform.Smoke (417 assertions), Linux.Smoke (192), CrossPlatformSmoke (273), Desktop.Smoke (284), cùng TextInputSmoke, FileSmoke và TransportSmoke dùng chung.
+Chạy `pwsh -File scripts/build-desktop.ps1 -Task Test` bằng .NET 10 SDK. Bộ này không cài hook, phát phím/chuột hoặc đọc/ghi clipboard thật: Platform.Smoke (428 assertions), Linux.Smoke (192), CrossPlatformSmoke (278), Desktop.Smoke (284), cùng TextInputSmoke, FileSmoke và TransportSmoke dùng chung.
 
 Chín cặp Windows/macOS/Linux trong Desktop.Smoke là nhãn của backend giả qua TLS localhost thật. Các kiểm tra bao phủ đồng ý kết nối, hello/quyền đúng thứ tự, từ chối gói sai, Telex/Unicode, chuyển máy, chuột, clipboard giả, SHA-256 của file và nhả đầu vào khi ngắt. Không suy ra đã thử vật lý đủ chín cặp máy.
 

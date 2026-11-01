@@ -75,7 +75,7 @@ public sealed class LinuxInputBackend : IInputBackend
             _ready.Task.WaitAsync(TimeSpan.FromSeconds(10)).GetAwaiter().GetResult();
             // Explicitly avoid SharpHook 8's /dev/input + /dev/uinput backend and its broad permissions.
             UioHookProvider.Instance.SetLinuxMode(LinuxMode.XRecord);
-            _injector.StartInjectionOnly();
+            _injector.StartInjectionOnly(Bounds);
             _physicalWorker = Task.Run(DeliverPhysicalAsync);
             Volatile.Write(ref _started, 1);
         }

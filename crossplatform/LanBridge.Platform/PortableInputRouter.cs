@@ -496,9 +496,9 @@ public sealed class PortableInputRouter : IDisposable, IAsyncDisposable
         }
         foreach (var button in _physicalButtons)
         {
-            // Native button injection includes a pointer position. Keep this asynchronous
-            // local release at the parked anchor instead of warping A back to its old edge.
-            QueueLocalRelease(new() { Type = "button", Button = button, X = Normalize(_anchor.X, bounds.X, bounds.Width), Y = Normalize(_anchor.Y, bounds.Y, bounds.Height), Down = false });
+            // This internal-only release has no position: if native work finishes after a
+            // quick return to A, it must not move the pointer back to an old capture anchor.
+            QueueLocalRelease(new() { Type = "local-button-release", Button = button, Down = false });
             SendButton(button, true);
         }
         NotifyRemote(true);
