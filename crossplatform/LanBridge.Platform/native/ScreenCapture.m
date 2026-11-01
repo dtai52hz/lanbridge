@@ -26,9 +26,11 @@ static void LBDrawDisplay(CGContextRef context, CGImageRef image, CGRect frame, 
 
 static void LBExport(CGContextRef context, void *pixels, int width, int height, int stride)
 {
+    // A CGImage bitmap context already stores scanlines in image (top-to-bottom) order,
+    // although its drawing coordinates have a lower-left origin. Do not flip them again.
     const unsigned char *source = CGBitmapContextGetData(context);
     for (int row = 0; row < height; row++)
-        memcpy((unsigned char *)pixels + row * stride, source + (height - 1 - row) * width * 4, width * 4);
+        memcpy((unsigned char *)pixels + row * stride, source + row * width * 4, width * 4);
 }
 
 // Native-only geometry/row-order check; no display, permission prompt or captured desktop.
@@ -47,9 +49,10 @@ int lanbridge_capture_layout_smoke(void)
     CGContextFillRect(context, CGRectMake(0, 0, 2, 4));
     LBDrawDisplay(context, image, CGRectMake(-2, -2, 2, 2), CGRectMake(-2, -2, 2, 4), 2, 4);
     unsigned char result[32]; LBExport(context, result, 2, 4, 8);
-    int success = memcmp(pattern, result, sizeof(pattern)) == 0 && result[16] == 0 && result[17] == 0 && result[18] == 0;
+    int status = memcmp(pattern, result, sizeof(pattern)) == 0 ? 0 : 2;
+    if (result[16] != 0 || result[17] != 0 || result[18] != 0) status |= 4;
     CGContextRelease(context); CGImageRelease(image); CGColorSpaceRelease(colors); CGDataProviderRelease(provider);
-    return success ? 0 : 1;
+    return status;
 }
 
 __attribute__((visibility("default")))
@@ -112,7 +115,7 @@ int lanbridge_capture_bgra(int x, int y, int width, int height, void *pixels, in
         }
         if (status == 0 && captured == 0) status = 3;
         if (status == 0) {
-            // CGBitmapContext storage starts at its bottom row. Export top-to-bottom BGRA.
+            // Export CGImage-ordered scanlines as top-to-bottom BGRA.
             LBExport(context, pixels, outputWidth, outputHeight, stride);
         }
         CGContextRelease(context);
