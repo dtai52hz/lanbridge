@@ -1,4 +1,5 @@
 using System.Runtime.InteropServices;
+using System.Diagnostics;
 using System.Text;
 using SharpHook;
 using SharpHook.Data;
@@ -25,6 +26,7 @@ public sealed class SharpHookInputBackend : IInputBackend
     private int _lastX, _lastY;
     private double _wheelX, _wheelY;
     private readonly PhysicalModifierState _modifiers = new();
+    private MouseClickSequence _clicks = new(TimeSpan.FromMilliseconds(500));
 
     public string Name => OperatingSystem.IsMacOS() ? "macOS · Quartz" : OperatingSystem.IsWindows() ? "Windows · native" : "Linux · XRecord";
     public BackendCapabilities Capabilities => new(
@@ -88,6 +90,8 @@ public sealed class SharpHookInputBackend : IInputBackend
             provider.PromptUserIfAxApiDisabled = false;
             if (!provider.IsAxApiEnabled(false))
                 throw new InvalidOperationException("macOS chưa cấp quyền Accessibility. Mở System Settings → Privacy & Security → Accessibility, cho phép LanBridge rồi kết nối lại. Không có quyền nào được tự cấp.");
+            int multiClickTime = provider.GetMultiClickTime();
+            _clicks = new(TimeSpan.FromMilliseconds(multiClickTime is > 0 and <= 60000 ? multiClickTime : 500));
         }
 
         _bounds = nativeBounds is { } supplied ? ValidateInjectionBounds(supplied) : ReadBounds();
@@ -215,7 +219,13 @@ public sealed class SharpHookInputBackend : IInputBackend
                     bool buttonDown = packet.Type == "button" && packet.Down;
                     if (packet.Type == "button") MoveNormalized(simulator, packet.X, packet.Y);
                     if (buttonDown) _injectedButtons.Add(button);
-                    Check(buttonDown ? simulator.SimulateMousePress(button) : simulator.SimulateMouseRelease(button));
+                    if (OperatingSystem.IsMacOS())
+                    {
+                        var point = new DesktopPoint(_lastX, _lastY);
+                        ushort clicks = buttonDown ? _clicks.Press(button, point, Stopwatch.GetTimestamp()) : _clicks.Release(button, point);
+                        Check(buttonDown ? simulator.SimulateMousePress(button, clicks) : simulator.SimulateMouseRelease(button, clicks));
+                    }
+                    else Check(buttonDown ? simulator.SimulateMousePress(button) : simulator.SimulateMouseRelease(button));
                     if (!buttonDown) _injectedButtons.Remove(button);
                     break;
                 case "wheel":
@@ -264,6 +274,7 @@ public sealed class SharpHookInputBackend : IInputBackend
         int py = bounds.Y + (int)Math.Round(y / 65535.0 * Math.Max(0, bounds.Height - 1));
         Check(simulator.SimulateMouseMovement(ToNativeCoordinate(px), ToNativeCoordinate(py)));
         _lastX = px; _lastY = py;
+        if (OperatingSystem.IsMacOS()) _clicks.Move(new(px, py));
     }
 
     private void Scroll(EventSimulator simulator, int delta, bool horizontal)
@@ -305,7 +316,13 @@ public sealed class SharpHookInputBackend : IInputBackend
         foreach (var key in _injectedKeys.ToArray())
             try { Check(simulator.SimulateKeyRelease(key)); _injectedKeys.Remove(key); } catch (Exception e) { failure ??= e; }
         foreach (var button in _injectedButtons.ToArray())
-            try { Check(simulator.SimulateMouseRelease(button)); _injectedButtons.Remove(button); } catch (Exception e) { failure ??= e; }
+            try
+            {
+                ushort clicks = OperatingSystem.IsMacOS() ? _clicks.Release(button, new(_lastX, _lastY)) : (ushort)1;
+                Check(simulator.SimulateMouseRelease(button, clicks)); _injectedButtons.Remove(button);
+            }
+            catch (Exception e) { failure ??= e; }
+        _clicks.Clear();
         _wheelX = _wheelY = 0;
         if (failure is not null) throw new InvalidOperationException("Không thể nhả hết đầu vào đã mô phỏng.", failure);
     }

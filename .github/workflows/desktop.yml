@@ -64,7 +64,7 @@ jobs:
         shell: pwsh
         run: |
           $package = 'release/LanBridge-Desktop-0.8.0-preview.1-${{ matrix.rid }}'
-          $executable = if ($IsWindows) { "$package/LanBridge.Desktop.exe" } else { "$package/LanBridge.Desktop" }
+          $executable = if ($IsWindows) { "$package/LanBridge.Desktop.exe" } elseif ($IsMacOS) { "$package.app/Contents/MacOS/LanBridge.Desktop" } else { "$package/LanBridge.Desktop" }
           if ($IsWindows) {
             $desktopSmoke = Start-Process -FilePath (Resolve-Path $executable) -ArgumentList '--smoke' -Wait -PassThru -WindowStyle Hidden
             if ($desktopSmoke.ExitCode -ne 0) { throw "Published application failed smoke: $($desktopSmoke.ExitCode)." }

@@ -41,6 +41,8 @@ Không chạy bằng root và không cần cấp quyền `/dev/input` hoặc `/d
 4. Trong **Phiên điều khiển** trên A, chọn vị trí B, bộ gõ và phím chuyển. Mặc định **F9**: bấm để sang B, bấm lại để về A. Cách chuyển qua mép vẫn dùng được.
 5. **Ctrl + Alt + F12** tại A trả điều khiển về A; tại B còn thu hồi quyền nhập ngay. Mất mạng/đóng phiên nhả các phím/nút mà LanBridge đã đưa xuống.
 
+Nếu bàn phím Mac dùng F9 cho chức năng hệ thống, giữ **Fn + F9** hoặc chọn tổ hợp khác trong LanBridge. Fn là phím của máy A, không được gửi như một phím Windows.
+
 Có thể chọn máy theo cả hai chiều: Windows → Mac, Mac → Windows, Linux X11 → Windows/Mac, Windows/Mac → Linux X11 và các cặp cùng hệ điều hành. Đây là các đường giao thức đã triển khai, không phải tuyên bố đã kiểm tra vật lý đủ mọi cặp thiết bị.
 
 Nếu discovery bị chặn, **Chép mã máy này** trên B rồi dán vào **Kết nối bằng mã** ở A. Mã LB1 là quyền kết nối trực tiếp; chỉ gửi cho máy tin cậy. Luồng mã không hiện lại hộp hỏi tại B.

@@ -1,6 +1,7 @@
 using LanBridge;
 using LanBridge.CrossPlatform;
 using SharpHook.Data;
+using System.Diagnostics;
 
 int assertions = 0;
 void Check(bool condition, string description)
@@ -97,6 +98,52 @@ modifiers.ObservePointer(EventMask.None); modifiers.SetCapture(true);
 Check(!modifiers.ObserveKey(0x14, true, EventMask.CapsLock).HasFlag(EventMask.CapsLock), "Swallowed Caps Lock must not alter the router's baseline twice");
 modifiers.SetCapture(false); modifiers.ObservePointer(EventMask.CapsLock); modifiers.SetCapture(true);
 Check(modifiers.ObserveKey(0x41, true, EventMask.None).HasFlag(EventMask.CapsLock), "Edge entry uses latest pointer-event native lock baseline");
+
+long Tick(int milliseconds) => (long)(milliseconds / 1000d * Stopwatch.Frequency);
+void Click(MouseClickSequence sequence, MouseButton button, DesktopPoint point, int milliseconds, ushort expected)
+{
+    Check(sequence.Press(button, point, Tick(milliseconds)) == expected, "Quartz press must carry the inferred click count");
+    Check(sequence.Release(button, point) == expected, "Quartz release must retain the matching press click count");
+}
+var clicks = new MouseClickSequence(TimeSpan.FromMilliseconds(500));
+var location = new DesktopPoint(100, 100);
+Click(clicks, MouseButton.Button1, location, 0, 1);
+Click(clicks, MouseButton.Button1, location, 100, 2);
+Click(clicks, MouseButton.Button1, location, 200, 3);
+Click(clicks, MouseButton.Button1, location, 300, 3);
+Click(clicks, MouseButton.Button1, location, 1000, 1);
+Click(clicks, MouseButton.Button1, new(104, 104), 1100, 2);
+Click(clicks, MouseButton.Button1, new(109, 104), 1200, 1);
+Click(clicks, MouseButton.Button2, new(109, 104), 1300, 1);
+Click(clicks, MouseButton.Button1, new(109, 104), 1400, 1);
+clicks.Clear();
+Click(clicks, MouseButton.Button1, location, 1450, 1);
+Click(clicks, MouseButton.Button1, location, 1400, 1); // Backwards/faulty clocks never create extra clicks.
+clicks.Clear();
+Check(clicks.Press(MouseButton.Button1, location, Tick(0)) == 1, "Initial press count");
+Check(clicks.Press(MouseButton.Button1, location, Tick(10)) == 1, "Repeated down without up is not a double click");
+Check(clicks.Release(MouseButton.Button1, location) == 1, "Repeated down preserves release count");
+Click(clicks, MouseButton.Button1, location, 100, 2);
+clicks.Clear();
+Check(clicks.Press(MouseButton.Button1, location, Tick(0)) == 1, "Drag starts with single count");
+clicks.Move(new(150, 150)); clicks.Move(location);
+Check(clicks.Release(MouseButton.Button1, location) == 1, "Drag release keeps its original count");
+Click(clicks, MouseButton.Button1, location, 100, 1);
+clicks.Move(new(200, 200)); clicks.Move(location);
+Click(clicks, MouseButton.Button1, location, 200, 1);
+Check(clicks.Release(MouseButton.Button5, location) == 1, "Unpaired cleanup up uses a safe single count");
+var slowClicks = new MouseClickSequence(TimeSpan.FromMilliseconds(1000));
+Click(slowClicks, MouseButton.Button1, location, 0, 1); Click(slowClicks, MouseButton.Button1, location, 800, 2);
+var fastClicks = new MouseClickSequence(TimeSpan.FromMilliseconds(200));
+Click(fastClicks, MouseButton.Button1, location, 0, 1); Click(fastClicks, MouseButton.Button1, location, 300, 1);
+clicks.Clear();
+Click(clicks, MouseButton.Button1, new(int.MinValue, int.MinValue), 0, 1);
+Click(clicks, MouseButton.Button1, new(int.MaxValue, int.MaxValue), 100, 1);
+bool invalidInterval = false, invalidDistance = false, invalidButton = false;
+try { _ = new MouseClickSequence(TimeSpan.Zero); } catch (ArgumentOutOfRangeException) { invalidInterval = true; }
+try { _ = new MouseClickSequence(TimeSpan.FromMilliseconds(500), -1); } catch (ArgumentOutOfRangeException) { invalidDistance = true; }
+try { clicks.Press(MouseButton.NoButton, location, 0); } catch (ArgumentException) { invalidButton = true; }
+Check(invalidInterval && invalidDistance && invalidButton, "Invalid native click configuration must be rejected without injection");
 
 // Do not start a hook, access the user's clipboard, or inject any native input in smoke tests.
 using (var backend = new SharpHookInputBackend())
