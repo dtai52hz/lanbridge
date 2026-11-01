@@ -30,7 +30,10 @@ Check(DesktopScreenCapture.Component(0xffffffff, 0) == 0, "Missing X11 mask is h
 var inertCapture = DesktopScreenCapture.Create(() => throw new InvalidOperationException("Must remain inert"));
 Check(inertCapture != null, "Constructing a capture provider does not inspect or request access to the desktop");
 if (OperatingSystem.IsMacOS())
-    Check(MacScreenLayoutSmoke.Check() == 0, "ScreenCaptureKit helper preserves synthetic BGRA row order and negative monitor offsets without capturing a desktop");
+{
+    int layoutStatus = MacScreenLayoutSmoke.Check();
+    Check(layoutStatus == 0, $"ScreenCaptureKit helper preserves synthetic BGRA row order and negative monitor offsets without capturing a desktop (status {layoutStatus})");
+}
 
 int[] letterScans = [0x1E, 0x30, 0x2E, 0x20, 0x12, 0x21, 0x22, 0x23, 0x17, 0x24, 0x25, 0x26,
     0x32, 0x31, 0x18, 0x19, 0x10, 0x13, 0x1F, 0x14, 0x16, 0x2F, 0x11, 0x2D, 0x15, 0x2C];
