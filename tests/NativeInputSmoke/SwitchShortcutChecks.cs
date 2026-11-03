@@ -117,7 +117,7 @@ internal static class SwitchShortcutChecks
             "Returning with a chord must release every prior remote key, including its forwarded modifiers.");
         route.Key(0x4B, false);
         foreach (int modifier in new[] { 0xA2, 0xA4, 0xA0 }) check(route.Key(modifier, false), "Return chord modifiers must consume late key ups on A.");
-        check(!route.Key(0x41, false), "An unrelated physical key release must remain local after returning to A.");
+        check(route.Key(0x41, false), "A key owned by B must consume its trailing physical up after returning to A.");
         var returned = route.Take();
         check(returned.All(packet => packet.Type != "key" || packet.Key != 0x4B), "The return chord trigger must never be sent to B.");
         foreach (int key in new[] { 0x41, 0xA2, 0xA4, 0xA0 })
@@ -219,8 +219,8 @@ internal static class SwitchShortcutChecks
         route.Key(0x77, false);
         route.Key(0xA2, true);
         route.Key(0xA4, true);
-        check(!route.Key(0x7B, true) && !route.Router.IsRemote,
-            "The reserved Ctrl+Alt+F12 escape must still return A independently of the configured switch.");
+        check(route.Key(0x7B, true) && !route.Router.IsRemote,
+            "The reserved Ctrl+Alt+F12 escape must return A without leaking its remote-owned trigger locally.");
         route.Key(0x7B, false);
         route.Key(0xA4, false);
         route.Key(0xA2, false);

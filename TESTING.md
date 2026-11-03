@@ -2,6 +2,16 @@
 
 Chạy tất cả bằng `pwsh -File scripts/build.ps1 -Task Test` với .NET 10 SDK trên Windows.
 
+## Chặn lọt đầu vào trên A · Windows 0.7.4
+
+Kết quả: NativeInputSmoke **3.386** assertions, SessionSmoke **689**, ScreenStreamingSmoke **115**. Giao thức và đường nhập vẫn dùng các bộ kiểm tra hồi quy chung.
+
+NativeInputSmoke đi qua chính callback bàn phím/chuột bằng cấu trúc sự kiện giả, bộ đếm hàm chuyển tiếp giả và dispatcher đã tắt native. Kiểm tra thao tác vật lý chỉ được gửi một lần sang B, chặn sự kiện giả lập từ phần mềm khác tại A, cho qua dấu nhận diện LanBridge để nhả phím/đưa con trỏ về, và giữ phím/nút từ B đến lượt nhả thật. Có phím chuyển End, auto-repeat, đổi màn hình lần nữa khi còn giữ phím, ngắt phiên và Ctrl+Alt+F12.
+
+SessionSmoke dùng các callback giả của A qua TLS loopback tới B với đầu vào Windows giả, đối chiếu cả bên nhận B và hàm chuyển tiếp cục bộ của A. Không cài hook, khóa thiết bị, gõ, di chuột hoặc đóng ứng dụng trên máy người dùng. Các phép thử xác minh đường sự kiện đã sửa; chưa tái hiện nguyên phiên lỗi/ứng dụng cụ thể của người dùng và không khẳng định EVKey là nguyên nhân.
+
+Workflow `Windows native` chạy các bộ kiểm tra này trên Windows. Số đếm chặn trong Đo độ trễ chỉ giữ số lượng và trạng thái, không ghi ký tự, tọa độ hoặc nội dung clipboard. Khả năng chặn được kiểm tra tại callback Windows; các ứng dụng tự gửi thẳng thông điệp vào cửa sổ hoặc phần mềm bắt phím đứng trước LanBridge không được coi là đã kiểm chứng.
+
 ## Android và chia sẻ màn hình
 
 `pwsh -File scripts/build-android.ps1 -Task Test` chạy 13 bài JUnit giao thức/TLS và 11 bài Robolectric View/bố cục giả, rồi Android lint. `pwsh -File scripts/test-android-interop.ps1` dùng Java client thật với `HostServer`/`PeerConnection` C# thật, chỉ bind loopback: thử LBC1 xác nhận, LB1 bí mật sau pin TLS, Unicode/emoji/dấu câu, enter/move/button/key, khung hình giả Base64 và thu hồi quyền. Không mở cổng LAN, cài hook, dùng clipboard hoặc chụp màn hình thật.
@@ -20,7 +30,7 @@ Workflow `Desktop platforms` chạy trên Windows x64, macOS Intel/ARM64 và Ubu
 
 macOS native cần thử trên máy Mac đã cấp Accessibility/Input Monitoring; Linux Wayland chưa hỗ trợ. Xem [hướng dẫn và giới hạn desktop preview](crossplatform/README.md).
 
-## Bộ cài Windows 0.7.3
+## Bộ cài Windows 0.7.4
 
 ```powershell
 pwsh -File scripts/setup-installer-tools.ps1
@@ -32,7 +42,7 @@ Phép thử installer dùng một thư mục mới bên trong `.tools`, truyền
 
 Kiểm tra trước/sau bao gồm registry uninstall, shortcut và thiết lập thật, các tiến trình LanBridge đã mở và file dữ liệu nằm ngoài thư mục cài. Không khởi chạy hook, mạng, clipboard thật hoặc thay bản đang dùng. Phép thử này xác minh chép file, chạy preview và gỡ file; đăng ký Installed apps/shortcut của chế độ cài bình thường cần thử thủ công trên Windows.
 
-Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.3.
+Script Inno Setup yêu cầu Windows 10 build 17763 trở lên và x64 tương thích, cài vào tài khoản hiện tại, không tự đóng ứng dụng đang chạy. Cả ZIP lẫn Setup có MIT LICENSE và giấy phép/thông báo runtime, NAudio, Inno Setup. Cách đóng gói được giới thiệu ở 0.6.1 và tiếp tục áp dụng cho bản 0.7.4.
 
 ## Hồi quy gõ lâu 0.7.2
 

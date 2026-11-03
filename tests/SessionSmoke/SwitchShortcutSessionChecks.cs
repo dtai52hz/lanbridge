@@ -68,8 +68,10 @@ internal static partial class Program
             await Key(0xA2, true); await Key(0xA4, true);
             Check(await Key(0x20, true) && !source.IsRemote && await Key(0x20, false),
                 "The same chord must return from B without forwarding its Space trigger.");
-            Check(await Key(0xA4, false) && await Key(0xA2, false) && !await Key(0x41, false),
-                "Return must consume chord modifier ups and let the unrelated release stay local on A.");
+            Check(await Key(0xA4, false) && await Key(0xA2, false) && await Key(0x41, false),
+                "Return must consume every remote-owned trailing up, including an ordinary held key, before A resumes fresh input.");
+            Check(!await Key(0x41, true) && !await Key(0x41, false),
+                "A fresh ordinary press must become local immediately after its quarantined prior up.");
             await Applied(chordStart + 8, "The chord return did not release all held inputs and leave B.");
             var chordPackets = applied.Skip(chordStart).ToArray();
             Check(chordPackets.Length == 8 && chordPackets[0].Type == "enter" && chordPackets[^1].Type == "leave"

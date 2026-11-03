@@ -1,3 +1,11 @@
+# Windows 0.7.4 — Chặn lọt phím/chuột trên máy A
+
+- Trong lúc A điều khiển B, chặn các sự kiện phím/chuột giả lập từ phần mềm khác tại A, không gửi lại chúng lần hai sang B. Giữ các thao tác có dấu nhận diện LanBridge để nhả phím và đưa con trỏ về đúng vị trí.
+- Khi quay về A, giữ quyền sở hữu các phím/nút còn đang nhấn từ B đến lượt nhả thật; không cho auto-repeat hoặc lượt nhả cũ tác động lên A. Giữ phím chuyển tùy chọn và thoát Ctrl + Alt + F12.
+- Thêm kiểm tra qua callback Windows giả và phiên TLS loopback, cùng bộ đếm chặn chỉ ghi số lượng. Chưa xác nhận phần mềm cụ thể gây ra tình trạng thực tế của người dùng.
+- Giao diện đọc trạng thái điều khiển/chia sẻ hiện tại khi xử lý thông báo chậm; thông báo bật cũ không ghi đè trạng thái đã tắt mới.
+- Bản sửa dành cho ứng dụng Windows 0.7.x; các gói Desktop preview và Android giữ nguyên từ 0.7.3, có thể tải tại cùng trang Releases.
+
 # Android 0.1.0-preview.1 · Windows 0.7.3 · Desktop 0.8.0-preview.2
 
 - Thêm APK Android 8+ để điều khiển máy tính Windows/macOS/Linux X11 trong LAN: tìm thiết bị, xác nhận ở máy tính hoặc mã LB1, TLS ghim chứng thư, bàn rê chuột và chế độ xem màn hình/chạm trực tiếp.

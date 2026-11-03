@@ -129,7 +129,9 @@ internal static partial class Program
                 && source.TypingMode == TypingMode.VietnameseTelex && source.SwitchShortcut == new SwitchShortcut(0x78)
                 && source.CanControl && receiver.CanControl,
                 "Same-mode UI reset must clear composition while preserving the configured switch and session permission.");
-            Check(!await Key(0xA2, false), "The real Ctrl release must remain local after the UI reset returns A.");
+            Check(await Key(0xA2, false), "The remote-owned Ctrl up must remain quarantined after the UI reset returns A.");
+            Check(!await Key(0xA2, true) && !await Key(0xA2, false),
+                "After releasing the old remote Ctrl, a fresh local shortcut modifier must work normally.");
 
             int restartedAt = applied.Count;
             await EnterAsync();

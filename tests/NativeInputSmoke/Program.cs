@@ -3,7 +3,7 @@ using System.Runtime.InteropServices;
 using System.Collections.Concurrent;
 using LanBridge;
 
-// Deliberately never call Start or hook callbacks. Real routing paths run only on the
+// Deliberately never call Start or native hook APIs. Callback simulations run only on the
 // StartForTesting dispatcher, which disables all native injection and hook installation.
 // Nothing may move the user's cursor, type into applications, or block physical input.
 int assertions = 0;
@@ -97,6 +97,8 @@ MouseSpeedChecks.Run(Check);
 SwitchShortcutChecks.Run(Check);
 TypingRecoveryChecks.Run(Check);
 KeyboardHookMaintenanceChecks.Run(Check);
+ExclusiveKeyboardChecks.Run(Check);
+ExclusivePointerChecks.Run(Check);
 InputDiagnosticsChecks.Run(Check);
 NativeWorkerChecks.Run(Check);
 Console.WriteLine($"Native input smoke passed: {assertions} assertions; no hooks installed and no input injected.");

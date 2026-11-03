@@ -43,7 +43,9 @@ internal static partial class Program
         await CheckInboxPressureAsync();
         string root = Path.Combine(Path.GetTempPath(), "LanBridge-SessionSmoke-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(root);
+        await CheckQueuedStateUiSessionAsync(root);
         await CheckWindowsScreenViewingAsync(root);
+        await CheckExclusiveControlSessionAsync(root);
         string receiveA = Path.Combine(root, "receive-a"), receiveB = Path.Combine(root, "receive-b");
         using var a = new MainForm(preview: true, clipboard: new MemoryClipboard(), receivedDirectory: receiveA);
         using var b = new MainForm(preview: true, clipboard: new MemoryClipboard(), receivedDirectory: receiveB);

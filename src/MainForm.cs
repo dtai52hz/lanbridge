@@ -58,7 +58,15 @@ public sealed partial class MainForm : Form
         Size = new Size(1120, 860); MinimumSize = new Size(1060, 780); StartPosition = FormStartPosition.CenterScreen;
         BuildUi();
         InitializeDesktopExperience();
-        _input.RemoteControlChanged = remote => Ui(() => { _remoteState.Text = remote ? "ĐANG ĐIỀU KHIỂN MÁY B" : (_peer != null ? "CHUỘT ĐANG Ở MÁY A" : "CHƯA CÓ PHIÊN KẾT NỐI"); _remoteState.ForeColor = remote ? Accent : Muted; if (remote && _input.LastError is { } error) { Log(error); Emergency(); } });
+        _input.RemoteControlChanged = _ => Ui(() =>
+        {
+            // A queued ON notification can run after a synchronous return/stop on the UI.
+            // Render the current input state, rather than the old notification payload.
+            bool remote = _input.IsRemote;
+            _remoteState.Text = remote ? "ĐANG ĐIỀU KHIỂN MÁY B" : (_peer != null ? "CHUỘT ĐANG Ở MÁY A" : "CHƯA CÓ PHIÊN KẾT NỐI");
+            _remoteState.ForeColor = remote ? Accent : Muted;
+            if (remote && _input.LastError is { } error) { Log(error); Emergency(); }
+        });
         _input.EmergencyReleased = () => { Interlocked.Increment(ref _featuresPermissionEpoch); _screenStreaming?.SetPermission(false); Ui(Emergency); };
         _audio.Error = message => Ui(() => { _audio.StopCapture(); _audio.StopPlayback(); Log("Âm thanh: " + message); _audioOn = false; UpdateFeatureButtons(); if (IsHost) Send(new Packet { Type = "feature-state", Name = "audio", Allow = false }); });
         _recorder.Error = message => Ui(() => { Log("Ghi hình: " + message); _recordingOn = false; UpdateFeatureButtons(); Send(new Packet { Type = "feature-state", Name = "recording", Allow = false }); });
@@ -128,14 +136,21 @@ public sealed partial class MainForm : Form
         _screenStreaming = screenStreaming;
         if (screenStreaming != null)
         {
+            int latestScreenActive = 0;
             screenStreaming.Error += message => Ui(() => { if (_peer == peer && !token.IsCancellationRequested) Log("Xem màn hình: " + message); });
-            screenStreaming.StateChanged += active => Ui(() =>
+            screenStreaming.StateChanged += active =>
             {
-                if (_peer != peer || token.IsCancellationRequested) return;
-                _screenViewingOn = active;
-                UpdateFeatureButtons();
-                Log(active ? "Đang chia sẻ màn hình với thiết bị đã ghép nối. Tắt quyền Xem màn hình để dừng." : "Đã dừng chia sẻ màn hình.");
-            });
+                Volatile.Write(ref latestScreenActive, active ? 1 : 0);
+                Ui(() =>
+                {
+                    if (_peer != peer || token.IsCancellationRequested) return;
+                    bool current = Volatile.Read(ref latestScreenActive) != 0;
+                    if (_screenViewingOn == current) return;
+                    _screenViewingOn = current;
+                    UpdateFeatureButtons();
+                    Log(current ? "Đang chia sẻ màn hình với thiết bị đã ghép nối. Tắt quyền Xem màn hình để dừng." : "Đã dừng chia sẻ màn hình.");
+                });
+            };
         }
         var inputLatency = new InputLatencySampler(); _inputLatency = inputLatency;
         Action<Packet> inputSender = packet => peer.TrySend(!sessionIsHost && _inputDiagnosticsCapable ? inputLatency.Stamp(packet) : packet);

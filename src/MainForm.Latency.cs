@@ -64,6 +64,7 @@ public sealed partial class MainForm
         var input = _input.GetDiagnosticsSnapshot();
         var typing = _input.GetTypingDiagnosticsSnapshot();
         var keyboardHook = _input.GetKeyboardHookDiagnosticsSnapshot();
+        var exclusive = _input.GetExclusiveInputDiagnosticsSnapshot();
         var text = new StringBuilder();
         bool host = _peer == null ? IsHost : _sessionIsHost;
         text.AppendLine($"LanBridge {Application.ProductVersion} · {(host ? "Máy B" : "Máy A")}");
@@ -90,6 +91,11 @@ public sealed partial class MainForm
         text.AppendLine($"Vai trò giao diện: {(IsHost ? "B · nhận" : "A · điều khiển")}; luồng nhập: {(typing.IsController ? "A · điều khiển" : "B · nhận")}; điều khiển trên B: {(typing.IsRemote ? "đang bật" : "đang tắt")}.");
         if (typing.IsController)
         {
+            text.AppendLine(exclusive.IsExclusiveController
+                ? "Nhập trên A: đang chặn thao tác cục bộ qua kênh Windows để chỉ điều khiển B."
+                : "Nhập trên A: đang dùng cục bộ; chưa chuyển sang B.");
+            text.AppendLine($"Sự kiện giả lập từ phần mềm khác đã chặn ở A: phím {exclusive.ForeignKeyboardSuppressed}; chuột {exclusive.ForeignMouseSuppressed}.");
+            text.AppendLine($"Lượt giữ từ B bị giữ lại đến lúc nhả thật: phím {exclusive.QuarantinedKeyEvents}; nút chuột {exclusive.QuarantinedButtonEvents}.");
             text.AppendLine($"Bộ gõ đã chọn: {TypingModeName((TypingMode)_typing.SelectedIndex)}; đang xử lý: {TypingModeName(typing.EffectiveMode)}.");
             text.AppendLine($"Phím chuyển đang dùng trên A: {_input.SwitchShortcut?.DisplayName ?? "chưa gán / đang tạm dừng"}.");
             text.AppendLine($"Dịch phím trên A: thành công {typing.PrintableTranslationSuccesses}; thất bại {typing.PrintableTranslationFailures}; dùng đường dự phòng {typing.PrintableFallbacks}.");

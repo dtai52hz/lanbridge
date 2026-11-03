@@ -50,6 +50,10 @@ public sealed class InputRouter : IDisposable
     /// <summary>Hook maintenance counts only; does not retain keys, text or document content.</summary>
     public KeyboardHookDiagnosticsSnapshot GetKeyboardHookDiagnosticsSnapshot() =>
         _keyboardHooks?.Snapshot(_keyboardRefreshRequested) ?? new(0, 0, 0, -1, _keyboardRefreshRequested);
+    /// <summary>Suppression counts only; no key, text, coordinate or application content is retained.</summary>
+    public ExclusiveInputDiagnosticsSnapshot GetExclusiveInputDiagnosticsSnapshot() => new(
+        _controller && _remote, Interlocked.Read(ref _foreignKeyboardSuppressed), Interlocked.Read(ref _foreignMouseSuppressed),
+        Interlocked.Read(ref _quarantinedKeyEvents), Interlocked.Read(ref _quarantinedButtonEvents));
     public bool IsRemote => _remote;
     public bool IsController
     {
@@ -184,6 +188,11 @@ public sealed class InputRouter : IDisposable
     // Shortcut components remain physically tracked for matching/emergency release, but are
     // absent from remote typing until their real key ups (including key-down autorepeat).
     private readonly HashSet<int> _switchConsumedKeys = [];
+    // Inputs owned by B remain swallowed after returning to A until their actual physical up.
+    // Otherwise autorepeat or an orphan up can trigger an unrelated action in A's application.
+    private readonly HashSet<int> _returnConsumedKeys = [];
+    private readonly HashSet<string> _returnConsumedButtons = [];
+    private long _foreignKeyboardSuppressed, _foreignMouseSuppressed, _quarantinedKeyEvents, _quarantinedButtonEvents;
     private readonly Dictionary<int, KeyStroke> _receivedKeys = [];
     private readonly Dictionary<int, KeyStroke> _sentKeys = [];
     private readonly VietnameseComposer _composer = new();
@@ -224,6 +233,40 @@ public sealed class InputRouter : IDisposable
     // The override cannot affect a native-enabled router and never installs hooks or injects input.
     internal Func<int, int, (int Length, string Text)>? PrintableTranslationForTesting { get; set; }
     internal KeyboardHookTestApi? KeyboardHooksForTesting { get; set; }
+    internal Func<int, IntPtr, IntPtr, IntPtr>? KeyboardHookNextForTesting { get; set; }
+    internal Func<int, IntPtr, IntPtr, IntPtr>? MouseHookNextForTesting { get; set; }
+    internal Task<bool> RouteKeyboardHookForTestingAsync(int key, bool down, uint flags = 0, ulong extraInfo = 0, int scan = 0, int code = 0)
+    {
+        EnsureHookSimulation();
+        return SimulateHookAsync(new KeyboardHookData { VkCode = (uint)key, ScanCode = (uint)scan, Flags = flags, ExtraInfo = (UIntPtr)extraInfo },
+            code, down ? 0x100 : 0x101, KeyboardHook);
+    }
+    internal Task<bool> RouteMouseHookForTestingAsync(int message, int x, int y, uint mouseData = 0, uint flags = 0, ulong extraInfo = 0, int code = 0)
+    {
+        EnsureHookSimulation();
+        return SimulateHookAsync(new MouseHookData { Point = new NativePoint { X = x, Y = y }, MouseData = mouseData,
+            Flags = flags, ExtraInfo = (UIntPtr)extraInfo }, code, message, MouseHook);
+    }
+    private void EnsureHookSimulation()
+    {
+        if (!_started || _nativeInputEnabled || _disposed)
+            throw new InvalidOperationException("Hook callback simulations require a started native-disabled router.");
+    }
+    private async Task<bool> SimulateHookAsync<T>(T payload, int code, int message, HookProc callback) where T : struct
+    {
+        bool consumed = false;
+        await OnOwnerAsync(() =>
+        {
+            var pointer = Marshal.AllocHGlobal(Marshal.SizeOf<T>());
+            try
+            {
+                Marshal.StructureToPtr(payload, pointer, false);
+                consumed = callback(code, new IntPtr(message), pointer) != IntPtr.Zero;
+            }
+            finally { Marshal.FreeHGlobal(pointer); }
+        }, CancellationToken.None).ConfigureAwait(false);
+        return consumed;
+    }
     internal Task MaintainKeyboardHookForTestingAsync()
     {
         if (_nativeInputEnabled) throw new InvalidOperationException("Hook-maintenance tests require a native-disabled router.");
@@ -729,6 +772,7 @@ public sealed class InputRouter : IDisposable
         // separately, so injected releases never confuse the emergency shortcut or subsequent ups.
         foreach (var key in _physicalKeys.Values)
         {
+            if (_returnConsumedKeys.Contains(key.Key)) continue;
             // The triggering down is consumed before Windows sees it. Held modifiers and
             // unrelated keys already reached A and still need their local release.
             if (!fromShortcut || key.Key != _switchShortcut?.Key) InjectKey(key, false);
@@ -736,6 +780,7 @@ public sealed class InputRouter : IDisposable
         }
         foreach (var button in _physicalButtons)
         {
+            if (_returnConsumedButtons.Contains(button)) continue;
             InjectButton(button, false);
             SendButton(button, true);
         }
@@ -749,14 +794,21 @@ public sealed class InputRouter : IDisposable
 
     private IntPtr MouseHook(int code, IntPtr message, IntPtr data)
     {
-        if (code < 0 || _disposed) return CallNextHookEx(_mouseHook, code, message, data);
+        if (code < 0 || _disposed) return NextMouseHook(code, message, data);
+        bool capturedEvent = _controller && _remote;
         long callbackAt = _diagnostics.BeginHookCallback();
         try
         {
             var item = Marshal.PtrToStructure<MouseHookData>(data);
             _diagnostics.RecordHookEventArrival(item.Flags, 1, item.ExtraInfo.ToUInt64(), item.Time);
-            if ((item.Flags & 1) != 0 || item.ExtraInfo.ToUInt64() == InjectionTag)
-                return CallNextHookEx(_mouseHook, code, message, data);
+            // Our releases/warps must reach Windows. Other injected events must not
+            // bypass exclusive routing and click/scroll the application left open on A.
+            if (item.ExtraInfo.ToUInt64() == InjectionTag) return NextMouseHook(code, message, data);
+            if ((item.Flags & 1) != 0)
+            {
+                if (_controller && _remote) { Interlocked.Increment(ref _foreignMouseSuppressed); return new IntPtr(1); }
+                return NextMouseHook(code, message, data);
+            }
             var msg = message.ToInt32();
             var point = new Point(item.Point.X, item.Point.Y);
             if (msg == 0x0200)
@@ -777,7 +829,11 @@ public sealed class InputRouter : IDisposable
             else if (TryButton(msg, item.MouseData, out var button, out var down))
             {
                 _lastKeyboardActivityAt = KeyboardClockMilliseconds();
+                bool quarantined = _returnConsumedButtons.Contains(button);
+                capturedEvent |= quarantined;
                 if (down) _physicalButtons.Add(button); else _physicalButtons.Remove(button);
+                if (!down) _returnConsumedButtons.Remove(button);
+                if (quarantined) { Interlocked.Increment(ref _quarantinedButtonEvents); return new IntPtr(1); }
                 if (_controller && _remote)
                 {
                     if (down) { _composer.Reset(); SendPhysicalShifts(); }
@@ -794,16 +850,21 @@ public sealed class InputRouter : IDisposable
                 ReleaseUnneededShift();
                 return new IntPtr(1);
             }
-            if (!_controller && _remote && _blockLocal) return new IntPtr(1);
-            return CallNextHookEx(_mouseHook, code, message, data);
+            if (_remote && (_controller || _blockLocal)) return new IntPtr(1);
+            return NextMouseHook(code, message, data);
         }
         catch (Exception error)
         {
+            capturedEvent |= _controller && _remote;
             RecoverHookError(error);
-            return CallNextHookEx(_mouseHook, code, message, data);
+            return capturedEvent ? new IntPtr(1) : NextMouseHook(code, message, data);
         }
         finally { _diagnostics.EndHookCallback(callbackAt); }
     }
+
+    private IntPtr NextMouseHook(int code, IntPtr message, IntPtr data) => !_nativeInputEnabled
+        ? MouseHookNextForTesting?.Invoke(code, message, data) ?? IntPtr.Zero
+        : CallNextHookEx(_mouseHook, code, message, data);
 
     // Plans a local move without native calls; an immediate crossing runs in the same hook event.
     internal bool TrackExitEdge(Point point, long now)
@@ -854,18 +915,26 @@ public sealed class InputRouter : IDisposable
     private IntPtr KeyboardHook(int code, IntPtr message, IntPtr data)
     {
         if (code < 0 || _disposed) return NextKeyboardHook(code, message, data);
+        bool capturedEvent = _controller && _remote;
         long callbackAt = _diagnostics.BeginHookCallback();
         try
         {
             var item = Marshal.PtrToStructure<KeyboardHookData>(data);
             _diagnostics.RecordHookEventArrival(item.Flags, 0x10, item.ExtraInfo.ToUInt64(), item.Time);
-            if ((item.Flags & 0x10) != 0 || item.ExtraInfo.ToUInt64() == InjectionTag)
+            // Preserve our tagged local cleanup, while swallowing foreign synthetic
+            // input on A. Never feed IME Unicode replacements back through physical Telex.
+            if (item.ExtraInfo.ToUInt64() == InjectionTag) return NextKeyboardHook(code, message, data);
+            if ((item.Flags & 0x10) != 0)
+            {
+                if (_controller && _remote) { Interlocked.Increment(ref _foreignKeyboardSuppressed); return new IntPtr(1); }
                 return NextKeyboardHook(code, message, data);
+            }
             var msg = message.ToInt32();
             if (msg is not (0x0100 or 0x0101 or 0x0104 or 0x0105))
                 return NextKeyboardHook(code, message, data);
             bool down = msg is 0x0100 or 0x0104;
             var key = new KeyStroke((int)item.VkCode, (int)(item.ScanCode & 0xff), (item.Flags & 1) != 0);
+            capturedEvent |= _returnConsumedKeys.Contains(key.Key) || _switchConsumedKeys.Contains(key.Key);
             bool consumed = ProcessPhysicalKey(key, down);
             // An explicit entry/recovery request must precede the first quickly typed
             // letter. Waiting for a posted timer can let a newer IME consume that letter.
@@ -876,14 +945,16 @@ public sealed class InputRouter : IDisposable
         }
         catch (Exception error)
         {
+            capturedEvent |= _controller && _remote;
             RecoverHookError(error);
-            return NextKeyboardHook(code, message, data);
+            return capturedEvent ? new IntPtr(1) : NextKeyboardHook(code, message, data);
         }
         finally { _diagnostics.EndHookCallback(callbackAt); }
     }
 
-    private IntPtr NextKeyboardHook(int code, IntPtr message, IntPtr data) =>
-        _keyboardHooks?.PassThrough(code, message, data) ?? CallNextHookEx(IntPtr.Zero, code, message, data);
+    private IntPtr NextKeyboardHook(int code, IntPtr message, IntPtr data) => !_nativeInputEnabled && KeyboardHookNextForTesting is { } next
+        ? next(code, message, data)
+        : _keyboardHooks?.PassThrough(code, message, data) ?? (!_nativeInputEnabled ? IntPtr.Zero : CallNextHookEx(IntPtr.Zero, code, message, data));
 
     private bool HasPhysical(int generic, int left, int right) =>
         _physicalKeys.ContainsKey(generic) || _physicalKeys.ContainsKey(left) || _physicalKeys.ContainsKey(right);
@@ -891,26 +962,33 @@ public sealed class InputRouter : IDisposable
     private bool ProcessPhysicalKey(KeyStroke key, bool down)
     {
         _lastKeyboardActivityAt = KeyboardClockMilliseconds();
+        bool quarantined = _returnConsumedKeys.Contains(key.Key);
+        bool switchConsumed = _switchConsumedKeys.Contains(key.Key);
         bool repeat = _physicalKeys.ContainsKey(key.Key);
         if (down) _physicalKeys[key.Key] = key; else _physicalKeys.Remove(key.Key);
+        if (!down) { _returnConsumedKeys.Remove(key.Key); _switchConsumedKeys.Remove(key.Key); }
         bool control = HasPhysical(0x11, 0xA2, 0xA3), alt = HasPhysical(0x12, 0xA4, 0xA5);
-        if (key.Key == 0x7B && down && control && alt)
+        if (key.Key == 0x7B && down && control && alt && !_emergencyChord)
         {
+            bool exclusiveEscape = _controller && (_remote || quarantined ||
+                _returnConsumedKeys.Any(IsControlOrAlt));
             EmergencyReleaseCore();
-            return false;
+            if (exclusiveEscape) _returnConsumedKeys.Add(key.Key);
+            return exclusiveEscape;
         }
         if (_emergencyChord)
         {
-            // Keep the emergency chord local even if UI/network callbacks run immediately.
-            if (!down) _switchConsumedKeys.Remove(key.Key);
+            // Emergency detection remains physical, but a chord owned by B must not
+            // leak its trailing ups/repeats into A after it has returned control.
             if (!control && !alt && !_physicalKeys.ContainsKey(0x7B)) _emergencyChord = false;
-            return false;
+            if (quarantined) Interlocked.Increment(ref _quarantinedKeyEvents);
+            return quarantined || switchConsumed;
         }
-        if (_switchConsumedKeys.Contains(key.Key))
+        if (switchConsumed)
         {
-            if (!down) _switchConsumedKeys.Remove(key.Key);
             return true;
         }
+        if (quarantined) { Interlocked.Increment(ref _quarantinedKeyEvents); return true; }
         var shortcut = _switchShortcut;
         if (down && !repeat && _controller && _allowed && _started && !_disposed && Send is not null
             && shortcut is not null && shortcut.Key == key.Key && shortcut.Modifiers == PhysicalModifiers())
@@ -933,17 +1011,18 @@ public sealed class InputRouter : IDisposable
     private ShortcutModifiers PhysicalModifiers()
     {
         ShortcutModifiers modifiers = ShortcutModifiers.None;
-        if (HasPhysical(0x11, 0xA2, 0xA3)) modifiers |= ShortcutModifiers.Control;
-        if (HasPhysical(0x12, 0xA4, 0xA5)) modifiers |= ShortcutModifiers.Alt;
-        if (HasPhysical(0x10, 0xA0, 0xA1)) modifiers |= ShortcutModifiers.Shift;
-        if (_physicalKeys.ContainsKey(0x5B) || _physicalKeys.ContainsKey(0x5C)) modifiers |= ShortcutModifiers.Windows;
+        bool Active(int key) => _physicalKeys.ContainsKey(key) && !_returnConsumedKeys.Contains(key);
+        if (Active(0x11) || Active(0xA2) || Active(0xA3)) modifiers |= ShortcutModifiers.Control;
+        if (Active(0x12) || Active(0xA4) || Active(0xA5)) modifiers |= ShortcutModifiers.Alt;
+        if (Active(0x10) || Active(0xA0) || Active(0xA1)) modifiers |= ShortcutModifiers.Shift;
+        if (Active(0x5B) || Active(0x5C)) modifiers |= ShortcutModifiers.Windows;
         return modifiers;
     }
 
     private bool HasRoutedPhysical(int generic, int left, int right) =>
         IsRoutedPhysical(generic) || IsRoutedPhysical(left) || IsRoutedPhysical(right);
 
-    private bool IsRoutedPhysical(int key) => _physicalKeys.ContainsKey(key) && !_switchConsumedKeys.Contains(key);
+    private bool IsRoutedPhysical(int key) => _physicalKeys.ContainsKey(key) && !_switchConsumedKeys.Contains(key) && !_returnConsumedKeys.Contains(key);
 
     private void EmergencyReleaseCore()
     {
@@ -957,11 +1036,11 @@ public sealed class InputRouter : IDisposable
     }
 
     private static bool IsShift(int key) => key is 0x10 or 0xA0 or 0xA1;
+    private static bool IsControlOrAlt(int key) => key is 0x11 or 0x12 or 0xA2 or 0xA3 or 0xA4 or 0xA5;
     private static bool IsShortcutModifier(int key) => key is 0x11 or 0x12 or 0xA2 or 0xA3 or 0xA4 or 0xA5 or 0x5B or 0x5C;
     private static bool IsModifier(int key) => IsShift(key) || IsShortcutModifier(key);
     private bool HasShortcutModifier() => HasRoutedPhysical(0x11, 0xA2, 0xA3) || HasRoutedPhysical(0x12, 0xA4, 0xA5)
-        || (_physicalKeys.ContainsKey(0x5B) && !_switchConsumedKeys.Contains(0x5B))
-        || (_physicalKeys.ContainsKey(0x5C) && !_switchConsumedKeys.Contains(0x5C));
+        || IsRoutedPhysical(0x5B) || IsRoutedPhysical(0x5C);
 
     private void RouteControllerKey(KeyStroke key, bool down)
     {
@@ -1005,7 +1084,7 @@ public sealed class InputRouter : IDisposable
 
     private void SendPhysicalShifts()
     {
-        foreach (var shift in _physicalKeys.Values.Where(k => IsShift(k.Key) && !_switchConsumedKeys.Contains(k.Key)))
+        foreach (var shift in _physicalKeys.Values.Where(k => IsShift(k.Key) && !_switchConsumedKeys.Contains(k.Key) && !_returnConsumedKeys.Contains(k.Key)))
             if (!_sentKeys.ContainsKey(shift.Key)) SendKey(shift, true);
     }
     private void ReleaseUnneededShift()
@@ -1022,7 +1101,7 @@ public sealed class InputRouter : IDisposable
         if (IsModifier(key.Key) || key.Key is 0x0D or 0x09 or 0x1B or 0x2E || key.Key is >= 0x21 and <= 0x28 || key.Key is >= 0x70 and <= 0x87) return false;
         Array.Clear(_translationState);
         foreach (int held in _physicalKeys.Keys)
-            if (held is >= 0 and < 256 && !_switchConsumedKeys.Contains(held)) _translationState[held] |= 0x80;
+            if (held is >= 0 and < 256 && !_switchConsumedKeys.Contains(held) && !_returnConsumedKeys.Contains(held)) _translationState[held] |= 0x80;
         _translationState[0x10] = HasRoutedPhysical(0x10, 0xA0, 0xA1) ? (byte)0x80 : (byte)0;
         _translationState[0x14] = _textCapsLock ? (byte)1 : (byte)0;
         int length;
@@ -1088,6 +1167,11 @@ public sealed class InputRouter : IDisposable
     {
         Interlocked.Increment(ref _inputGeneration);
         bool wasRemote = _remote;
+        if (wasRemote && _controller)
+        {
+            _returnConsumedKeys.UnionWith(_physicalKeys.Keys);
+            _returnConsumedButtons.UnionWith(_physicalButtons);
+        }
         _remote = false;
         _composer.Reset(); _textKeys.Clear();
         _blockLocal = false;
@@ -1710,6 +1794,10 @@ public sealed class InputRouter : IDisposable
     [DllImport("user32.dll")] private static extern uint MapVirtualKey(uint code, uint mapType);
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern IntPtr GetModuleHandle(string? moduleName);
 }
+
+/// <summary>Lifetime suppression counts only; no key, button, text or application content is retained.</summary>
+public sealed record ExclusiveInputDiagnosticsSnapshot(bool IsExclusiveController, long ForeignKeyboardSuppressed,
+    long ForeignMouseSuppressed, long QuarantinedKeyEvents, long QuarantinedButtonEvents);
 
 /// <summary>Payload-free lifetime typing counters. Queue acceptance does not confirm that a target rendered text.</summary>
 public sealed record TypingDiagnosticsSnapshot(
