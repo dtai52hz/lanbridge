@@ -7,10 +7,10 @@
 | Windows 10/11 x64 | `LanBridge-0.7.4-Setup-x64.exe` để cài, hoặc `LanBridge-0.7.4-Windows-x64.zip` để chạy trực tiếp |
 | Mac Apple Silicon / Mac Intel, macOS 14+ | Desktop `0.8.0-preview.2`, chọn `osx-arm64` / `osx-x64` |
 | Linux X11 x64 / ARM64 | Desktop `0.8.0-preview.2`, chọn `linux-x64` / `linux-arm64` |
-| Android 8 trở lên, điều khiển máy tính | `LanBridge-Android-0.1.0-preview.1.apk` |
+| Android 8 trở lên, điều khiển máy tính | `LanBridge-Android-0.1.0-preview.2.apk` |
 | Windows x64, thử giao diện đa nền tảng | `LanBridge-Desktop-0.8.0-preview.2-win-x64.zip` |
 
-Trang tải chung giữ phiên bản riêng của từng gói: **Windows 0.7.4**, **Desktop 0.8.0-preview.2** và **Android 0.1.0-preview.1**. Windows giữ bản sửa kênh gõ 0.7.2 và thêm bản sửa chặn lọt phím/chuột ở A trong 0.7.4; các thay đổi hook này chưa chuyển sang Desktop preview. Gói Desktop và APK được giữ nguyên từ đợt [0.7.3](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.3). [Hướng dẫn desktop preview](crossplatform/README.md) · [Hướng dẫn Android](android/README.md). Desktop preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ, gửi file thủ công và chia sẻ màn hình cho Android. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview.
+Trang tải chung giữ phiên bản riêng của từng gói: **Windows 0.7.4**, **Desktop 0.8.0-preview.2** và **Android 0.1.0-preview.2**. Windows giữ bản sửa kênh gõ 0.7.2 và thêm bản sửa chặn lọt phím/chuột ở A trong 0.7.4; các thay đổi hook này chưa chuyển sang Desktop preview. Gói Desktop giữ nguyên từ đợt [0.7.3](https://github.com/dtai52hz/lanbridge/releases/tag/v0.7.3). APK mới có [tag nguồn/phát hành riêng](https://github.com/dtai52hz/lanbridge/releases/tag/android-v0.1.0-preview.2), được thêm tại cùng trang tải. [Hướng dẫn desktop preview](crossplatform/README.md) · [Hướng dẫn Android](android/README.md). Desktop preview có chuột/phím hai chiều, Telex/VNI, chat, clipboard chữ, gửi file thủ công và chia sẻ màn hình cho Android. Linux Wayland và các tính năng media/clipboard ảnh-file tự động chưa có trong preview.
 
 Ứng dụng Windows cho hai máy tính chung mạng LAN: dùng chuột và bàn phím của A trên máy B bằng cách đưa chuột qua mép màn hình hoặc nhấn phím chuyển do bạn gán. Mỗi máy tiếp tục dùng màn hình riêng. Đây là bản thử nghiệm có mã nguồn và bản chạy độc lập cho Windows 10/11 x64.
 
@@ -28,11 +28,12 @@ Cập nhật **máy A** để nhận bản sửa này; B 0.7.1 trở lên vẫn 
 
 1. Cài APK trên điện thoại Android 8 trở lên; mở LanBridge trên điện thoại và máy tính cùng mạng LAN/Wi-Fi.
 2. Chọn máy tính trong danh sách, rồi bấm **Đồng ý** tại máy tính. Có thể dán mã LB1 nếu mạng chặn tìm thiết bị.
-3. Dùng **Bàn rê chuột**: vuốt một ngón để rê, chạm để bấm, hai ngón để cuộn. Có nút bấm phải, giữ/nhả chuột trái, Esc/Tab/Enter và phím tắt.
+3. Dùng **Bàn rê chuột**: vuốt một ngón để rê, chạm nhanh bấm trái, **nhấn giữ bấm phải**, hai ngón để cuộn. Nút **Bàn phím** mở bàn phím điện thoại; nút **Phím** có phím đặc biệt và phím tắt.
 4. Muốn nhìn màn hình máy tính trên điện thoại, cập nhật máy tính lên Windows **0.7.3** hoặc Desktop **0.8.0-preview.2**, bật quyền **Xem màn hình** tại máy tính rồi chọn **Xem màn hình** trên điện thoại. Quyền này mặc định tắt và tách khỏi quyền Chuột/phím. Trên Mac cần cấp thêm quyền Screen Recording.
 5. Nhập tiếng Việt bằng bàn phím điện thoại vào ô chữ rồi bấm **Gửi**. LanBridge gửi chữ Unicode đã có dấu; không chạy Telex lần nữa trên máy tính.
+6. Mở **Tệp** để gửi file điện thoại sang máy tính, hoặc bật nhận và xác nhận file máy tính gửi về. Nhận xong bấm **Lưu thành…** để chọn nơi lưu. Máy tính cần bật quyền **Truyền file**.
 
-Đây là Android preview một chiều **điện thoại → máy tính**, chưa có điều khiển điện thoại từ PC, clipboard/file/âm thanh trên Android. Ảnh màn hình tối đa 1280×800, 5 khung/giây; phù hợp thao tác cơ bản, chưa dành cho video/game. Khi về nền, điện thoại dừng nhận hình và nhả điều khiển. [Chi tiết cài đặt và giới hạn](android/README.md).
+Đây là Android preview với chiều điều khiển **điện thoại → máy tính**, truyền file thủ công **hai chiều**; chưa có điều khiển điện thoại từ PC, đồng bộ clipboard hay âm thanh trên Android. File tối đa 2 GiB, có kiểm tra SHA-256; ảnh màn hình tối đa 1280×800, 5 khung/giây. Khi về nền, điện thoại dừng nhận hình và nhả điều khiển. [Chi tiết cài đặt và giới hạn](android/README.md).
 
 ![Giao diện LanBridge 0.3.1 với thiết bị minh họa](docs/screenshots/devices-0.3.1.png)
 

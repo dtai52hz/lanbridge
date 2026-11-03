@@ -1,7 +1,9 @@
-param([switch]$SkipCompile)
+param([switch]$SkipCompile, [string]$JavaClasspath)
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 $androidRoot = Join-Path $projectRoot 'android'
+$localAndroidSdk = Join-Path $projectRoot '.tools/android-sdk'
+if (-not $env:ANDROID_HOME -and (Test-Path -LiteralPath $localAndroidSdk)) { $env:ANDROID_HOME = $localAndroidSdk }
 $isWindowsHost = [Environment]::OSVersion.Platform -eq [PlatformID]::Win32NT
 $localDotnet = Join-Path $projectRoot '.tools/dotnet/dotnet.exe'
 $dotnetCommand = if (Test-Path -LiteralPath $localDotnet) { $localDotnet } else { (Get-Command dotnet -ErrorAction Stop).Source }
@@ -22,12 +24,12 @@ if (-not $SkipCompile) {
 }
 
 $classpathFile = Join-Path $androidRoot 'app/build/interop-classpath.txt'
-if (-not (Test-Path -LiteralPath $classpathFile)) { throw 'Missing Gradle classpath. Run without -SkipCompile first.' }
-$javaClasspath = [IO.File]::ReadAllText($classpathFile).Trim()
+if (-not $JavaClasspath -and -not (Test-Path -LiteralPath $classpathFile)) { throw 'Missing Gradle classpath. Run without -SkipCompile first.' }
+$javaClasspath = if ($JavaClasspath) { $JavaClasspath } else { [IO.File]::ReadAllText($classpathFile).Trim() }
 $serverDll = Join-Path $projectRoot 'tests/AndroidInteropSmoke/bin/Release/net10.0/AndroidInteropSmoke.dll'
 if (-not (Test-Path -LiteralPath $serverDll)) { throw 'Missing C# test binary. Run without -SkipCompile first.' }
 
-foreach ($mode in @('device', 'code')) {
+foreach ($mode in @('device', 'code', 'files-device', 'files-code')) {
     $serverInfo = [Diagnostics.ProcessStartInfo]::new()
     $serverInfo.FileName = $dotnetCommand
     $serverInfo.WorkingDirectory = $projectRoot
@@ -57,7 +59,7 @@ foreach ($mode in @('device', 'code')) {
             $probeInfo.ArgumentList.Add($argument)
         }
         $probe = [Diagnostics.Process]::Start($probeInfo)
-        if (-not $probe.WaitForExit(20000)) { throw 'Java loopback probe timed out.' }
+        if (-not $probe.WaitForExit(40000)) { throw 'Java loopback probe timed out.' }
         $probe.StandardOutput.ReadToEnd().Trim()
         $probeError = $probe.StandardError.ReadToEnd()
         if ($probe.ExitCode -ne 0) { throw ('Java interop verification failed: ' + $probeError) }

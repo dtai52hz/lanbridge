@@ -80,6 +80,7 @@ public final class MainActivityLayoutTest {
         Paint paint = new Paint(); paint.setColor(Color.rgb(40, 200, 176)); canvas.drawRect(80, 80, 650, 460, paint);
         paint.setColor(Color.WHITE); paint.setTextSize(52); canvas.drawText("LanBridge · PC", 120, 180, paint);
         surface.setImage(screen);
+        Method keyboard = MainActivity.class.getDeclaredMethod("setKeyboardVisible", boolean.class); keyboard.setAccessible(true); keyboard.invoke(activity, true);
         return field(activity, "root");
     }
     private static void layout(View view, int width, int height) {

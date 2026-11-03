@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="../../src/Models.cs" Link="Models.cs" />
     <Compile Include="../../src/Transport.cs" Link="Transport.cs" />
+    <Compile Include="../../src/FileTransfer.cs" Link="FileTransfer.cs" />
   </ItemGroup>
 </Project>

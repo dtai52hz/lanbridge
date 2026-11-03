@@ -14,7 +14,15 @@ Workflow `Windows native` chạy các bộ kiểm tra này trên Windows. Số �
 
 ## Android và chia sẻ màn hình
 
-`pwsh -File scripts/build-android.ps1 -Task Test` chạy 13 bài JUnit giao thức/TLS và 11 bài Robolectric View/bố cục giả, rồi Android lint. `pwsh -File scripts/test-android-interop.ps1` dùng Java client thật với `HostServer`/`PeerConnection` C# thật, chỉ bind loopback: thử LBC1 xác nhận, LB1 bí mật sau pin TLS, Unicode/emoji/dấu câu, enter/move/button/key, khung hình giả Base64 và thu hồi quyền. Không mở cổng LAN, cài hook, dùng clipboard hoặc chụp màn hình thật.
+`pwsh -File scripts/build-android.ps1 -Task Test` chạy JUnit giao thức/TLS/file và Robolectric cảm ứng, bàn phím, tài liệu giả, bố cục rồi Android lint. `pwsh -File scripts/test-android-interop.ps1` dùng Java client thật với `HostServer`/`PeerConnection` và `FileTransfer` C# thật, chỉ bind loopback: thử LBC1 xác nhận, LB1 bí mật sau pin TLS, Unicode/emoji/dấu câu, enter/move/button/key, khung hình giả Base64 và thu hồi quyền. Không mở cổng LAN, cài hook, dùng clipboard hoặc chụp màn hình thật.
+
+Android 0.1.0-preview.2 thêm kiểm tra nhấn giữ bấm phải (chỉ một lần, không bấm trái khi nhấc tay), hủy khi rê/thêm ngón/mất focus/đổi chế độ, giữ trái thủ công; nhận file đúng SHA/độ dài, lỗi/hủy/thu hồi quyền, tên Unicode dài, tệp rỗng, kích thước nguồn đổi và không ghi đè. Hàng đợi ghi file giới hạn 64 khối (~3 MiB), một khối gửi chờ ghi TLS; chuột/phím và heartbeat được ưu tiên. Phép thử bộ nhớ chậm vừa phải vẫn nhận đủ; khi quá tải có chủ ý chỉ hủy file, rồi nhận lại được.
+
+Lượt kiểm tra tích hợp preview.2 đạt **67 bài**: 28 giao thức/TLS/file, 17 cảm ứng và 22 lưu trữ/giao diện/bố cục; Android release lint không có lỗi. Nguồn mở/đọc file không chịu hủy được thử bằng stream giả: một lượt mới vẫn chạy, tối đa hai worker bị treo và báo bận ngay khi đã đầy, không mở thêm thread vô hạn.
+
+Hai ca file Java ↔ C# thực tế gửi đồng thời 2 MiB từ điện thoại giả sang PC và 384 KiB chiều ngược lại, đối chiếu SHA-256, gửi thao tác/Unicode khi file đang truyền, nhận mẫu heartbeat, hủy nhận giữa chừng và thu hồi quyền gửi. Cả bốn ca `device`, `code`, `files-device`, `files-code` chạy cùng script. PC không đổi giao thức, bản manual hiện tại không có ACK từng khối.
+
+Bộ nhớ Android dùng provider giả, vùng riêng của Robolectric và AtomicFile: file nhận chỉ được đánh dấu hoàn tất trước ACK sau khi SHA hợp lệ; chỉ mục vẫn giữ qua đóng phiên/tạo lại Activity, rollback không xóa chỉ mục mới, chọn file/lưu bằng content URI hợp lệ, hủy và lỗi không ghi đè dữ liệu. Đây là kiểm tra mô phỏng, không phải thử DocumentsUI hay provider đám mây trên điện thoại vật lý.
 
 `ScreenStreamingSmoke` (115 assertions) thử mặc định từ chối, cấp quyền/yêu cầu rõ ràng, lỗi chụp đồng bộ, chuyển thế hệ khi native capture không hủy được, giới hạn JPEG, thứ tự thông báo, tối đa một lần chụp/gửi và dispose không chờ. Đồng hồ giả xác minh phải đủ 200 ms giữa các khung kể cả sau thời gian chờ luồng cũ; các phép thử chuyển thế hệ dùng tín hiệu đồng bộ, không chờ một giá trị số đếm thoáng qua. `SessionSmoke` Windows (600 assertions) có thêm fake capture qua TLS với form ẩn: hello capability, quyền tại thời điểm nhận/hiện tại, thu hồi/cấp lại, màn che, phím thoát khẩn cấp và ngắt phiên. Tất cả ảnh đều tổng hợp.
 

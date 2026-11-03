@@ -16,6 +16,7 @@ import android.view.Gravity;
 import android.view.View;
 import android.view.WindowInsets;
 import android.view.WindowManager;
+import android.view.inputmethod.InputMethodManager;
 import android.widget.Button;
 import android.widget.EditText;
 import android.widget.LinearLayout;
@@ -35,11 +36,13 @@ import io.github.dtai52hz.lanbridge.net.LanDiscovery;
 
 public final class MainActivity extends Activity {
     private static final int BG = Color.rgb(15, 20, 29), CARD = Color.rgb(25, 35, 48), ACCENT = Color.rgb(40, 200, 176), MUTED = Color.rgb(162, 182, 201);
-    private LinearLayout root, connectPage, sessionPage, devices;
+    private LinearLayout root, connectPage, sessionPage, devices, keyboardPanel;
     private TextView status, hint, machine;
     private EditText code, typing;
     private RemoteSurface surface;
-    private Button screenButton, padButton, dragButton;
+    private Button screenButton, padButton, dragButton, keyboardButton;
+    private FilePanelController filePanel;
+    private boolean keyboardVisible;
     private LanDiscovery discovery;
     private WifiManager.MulticastLock multicast;
     private LanBridgeClient client;
@@ -71,6 +74,7 @@ public final class MainActivity extends Activity {
         root.addView(text("ĐIỀU KHIỂN MÁY TÍNH TỪ ĐIỆN THOẠI", 10, ACCENT));
         status = text("Cùng Wi-Fi / mạng LAN với máy tính", 13, MUTED); spaced(root, status, 12);
         buildConnectPage(); buildSessionPage(); showConnect();
+        filePanel = new FilePanelController(this, this::releaseForLocalUi, state);
         if (Build.VERSION.SDK_INT >= 33) getOnBackInvokedDispatcher().registerOnBackInvokedCallback(
                 android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT, this::handleBack);
     }
@@ -87,7 +91,8 @@ public final class MainActivity extends Activity {
         code.setInputType(InputType.TYPE_CLASS_TEXT | InputType.TYPE_TEXT_VARIATION_VISIBLE_PASSWORD);
         code.setImportantForAutofill(View.IMPORTANT_FOR_AUTOFILL_NO); spaced(connectPage, code, 8);
         spaced(connectPage, button("Kết nối bằng mã", v -> connect(null)), 8);
-        spaced(connectPage, text("Android 0.1 preview · Xem màn hình cần Windows 0.7.3 hoặc Desktop 0.8 preview.2.", 11, MUTED), 12);
+        spaced(connectPage, button("Tệp đã nhận", v -> { if (filePanel != null) filePanel.show(); }), 4);
+        spaced(connectPage, text(androidVersion() + " · Xem màn hình cần Windows 0.7.3 hoặc Desktop 0.8 preview.2.", 11, MUTED), 12);
     }
     private void buildSessionPage() {
         sessionPage = column(); root.addView(sessionPage, new LinearLayout.LayoutParams(-1, 0, 1));
@@ -105,14 +110,14 @@ public final class MainActivity extends Activity {
         LinearLayout buttons = row(); buttons.addView(button("Trái", v -> click("left")), equal());
         buttons.addView(button("Phải", v -> click("right")), equal()); dragButton = button("Giữ trái", v -> toggleDrag()); buttons.addView(dragButton, equal());
         spaced(sessionPage, buttons, 5);
-        LinearLayout keys = row(); keys.addView(button("Esc", v -> press(0x1B)), equal()); keys.addView(button("Tab", v -> press(0x09)), equal());
-        keys.addView(button("⌫", v -> press(0x08)), equal()); keys.addView(button("Enter", v -> press(0x0D)), equal()); spaced(sessionPage, keys, 3);
-        LinearLayout shortcuts = row(); shortcuts.addView(button("Ctrl+C", v -> shortcut(0x11, 0x43)), equal());
-        shortcuts.addView(button("Ctrl+V", v -> shortcut(0x11, 0x56)), equal()); shortcuts.addView(button("⌘+C", v -> shortcut(0x5B, 0x43)), equal());
-        shortcuts.addView(button("⌘+V", v -> shortcut(0x5B, 0x56)), equal()); spaced(sessionPage, shortcuts, 3);
+        LinearLayout tools = row();
+        keyboardButton = button("Bàn phím", v -> setKeyboardVisible(!keyboardVisible)); tools.addView(keyboardButton, equal());
+        tools.addView(button("Tệp", v -> { if (filePanel != null) filePanel.show(); }), equal());
+        tools.addView(button("Phím", v -> showSpecialKeys()), equal()); spaced(sessionPage, tools, 3);
+        keyboardPanel = column(); keyboardPanel.setVisibility(View.GONE); sessionPage.addView(keyboardPanel);
         LinearLayout input = row(); typing = edit("Nhập tiếng Việt ở đây…", true); typing.setMaxLines(3);
         typing.setFilters(new InputFilter[]{new InputFilter.LengthFilter(4096)}); input.addView(typing, new LinearLayout.LayoutParams(0, -2, 1));
-        input.addView(button("Gửi", v -> sendText())); spaced(sessionPage, input, 6);
+        input.addView(button("Xóa", v -> typing.setText(""))); input.addView(button("Gửi", v -> sendText())); spaced(keyboardPanel, input, 4);
     }
     private void connect(Device device) {
         if (client != null) { toast("Đang có phiên hoặc yêu cầu kết nối. Bấm Ngắt để thử lại."); return; }
@@ -132,6 +137,7 @@ public final class MainActivity extends Activity {
                 getWindow().addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);
             }); }
             public void onPermissions(boolean allowed) { ui(() -> { inputAllowed = allowed; surface.setControlEnabled(allowed); if (!allowed) resetDrag(); refreshHint(); }); }
+            public void onFilesPermission(boolean allowed) { ui(() -> filePanel.setPeerAllowed(allowed)); }
             public void onScreenCapability(boolean supported) { ui(() -> { screenCapable = supported; refreshHint(); }); }
             public void onScreenPermission(boolean allowed) { ui(() -> {
                 screenAllowed = allowed; if (!allowed) { stopFrames(); surface.cancelGesture(); resetDrag(); }
@@ -141,6 +147,7 @@ public final class MainActivity extends Activity {
             public void onError(String message) { ui(() -> status.setText(message)); }
             public void onClosed(String reason) { ui(() -> {
                 client = null; ready = false; stopFrames(); resetDrag(); surface.cancelGesture();
+                filePanel.detach(); setKeyboardVisible(false);
                 showConnect(); status.setText(reason == null ? "Đã ngắt kết nối" : reason); if (foreground) startDiscovery();
             }); }
             public void onPacket(JSONObject packet) {
@@ -154,12 +161,13 @@ public final class MainActivity extends Activity {
             }
         });
         client = next;
+        filePanel.attach(next);
         try {
             String name = "Android · " + Build.MODEL; if (name.length() > 70) name = name.substring(0, 70);
             if (device == null) next.connectCode(code.getText().toString().trim(), name); else next.connectDevice(device, name);
             sessionPage.setVisibility(View.VISIBLE); connectPage.setVisibility(View.GONE); machine.setText("Đang ghép nối…");
             surface.setControlEnabled(false); surface.clearImage(); refreshHint();
-        } catch (IllegalArgumentException exception) { next.close(); client = null; showConnect(); toast(exception.getMessage()); if (foreground) startDiscovery(); }
+        } catch (IllegalArgumentException exception) { next.close(); client = null; filePanel.detach(); showConnect(); toast(exception.getMessage()); if (foreground) startDiscovery(); }
     }
     private void disconnect() {
         LanBridgeClient previous = client;
@@ -180,7 +188,7 @@ public final class MainActivity extends Activity {
         else if (direct && !screenCapable) hint.setText("Cập nhật máy tính: Windows 0.7.3 / Desktop 0.8 preview.2 để xem màn hình.");
         else if (direct && !screenAllowed) hint.setText("Trên máy tính, bật quyền Xem màn hình cho phiên này.");
         else if (!inputAllowed) hint.setText("Trên máy tính, bật quyền Chuột / phím để điều khiển.");
-        else hint.setText(direct ? "Chạm và kéo để điều khiển · Hai ngón để cuộn" : "Vuốt để rê chuột · Chạm để bấm · Hai ngón để cuộn");
+        else hint.setText(direct ? "Chạm và kéo để điều khiển · Hai ngón để cuộn" : "Vuốt để rê chuột · Hai ngón để cuộn · Nhấn giữ để bấm phải");
     }
     private void click(String button) { if (ensureControl()) { client.button(button, true); client.button(button, false); } }
     private void toggleDrag() {
@@ -193,6 +201,34 @@ public final class MainActivity extends Activity {
     private void shortcut(int modifier, int key) {
         if (ensureControl()) { client.key(modifier, true); client.key(key, true); client.key(key, false); client.key(modifier, false); }
     }
+    private void setKeyboardVisible(boolean visible) {
+        surface.cancelGesture(); resetDrag(); keyboardVisible = visible;
+        keyboardPanel.setVisibility(visible ? View.VISIBLE : View.GONE);
+        keyboardButton.setText(visible ? "Ẩn phím" : "Bàn phím");
+        InputMethodManager keyboard = (InputMethodManager) getSystemService(INPUT_METHOD_SERVICE);
+        if (visible) { typing.requestFocus(); typing.post(() -> { if (keyboardVisible && keyboard != null) keyboard.showSoftInput(typing, InputMethodManager.SHOW_IMPLICIT); }); }
+        else { typing.clearFocus(); if (keyboard != null) keyboard.hideSoftInputFromWindow(typing.getWindowToken(), 0); }
+    }
+    private void releaseForLocalUi() {
+        surface.cancelGesture(); resetDrag();
+        if (client != null) client.leave();
+        setKeyboardVisible(false);
+    }
+    private void showSpecialKeys() {
+        releaseForLocalUi();
+        String[] labels = { "Esc", "Tab", "Xóa lùi ⌫", "Enter", "Mũi tên ↑", "Mũi tên ↓", "Mũi tên ←", "Mũi tên →",
+            "Ctrl + C", "Ctrl + V", "Ctrl + A", "Alt + Tab", "Shift + Tab", "⌘ + C", "⌘ + V" };
+        int[] keys = { 0x1B, 0x09, 0x08, 0x0D, 0x26, 0x28, 0x25, 0x27, 0x43, 0x56, 0x41, 0x09, 0x09, 0x43, 0x56 };
+        new AlertDialog.Builder(this).setTitle("Phím và tổ hợp trên máy tính").setItems(labels, (dialog, index) -> {
+            if (index < 8) press(keys[index]);
+            else shortcut(index < 11 ? 0x11 : index == 11 ? 0x12 : index == 12 ? 0x10 : 0x5B, keys[index]);
+        }).setNegativeButton("Đóng", null).show();
+    }
+    @Override protected void onActivityResult(int request, int result, android.content.Intent data) {
+        super.onActivityResult(request, result, data);
+        if (filePanel != null) filePanel.activityResult(request, result, data);
+    }
+    @Override protected void onSaveInstanceState(Bundle state) { if (filePanel != null) filePanel.saveState(state); super.onSaveInstanceState(state); }
     private void sendText() {
         if (!ensureControl()) { toast("Máy tính chưa cấp quyền Chuột / phím."); return; }
         String value = typing.getText().toString(); if (value.isEmpty()) return;
@@ -293,17 +329,19 @@ public final class MainActivity extends Activity {
             }); item.setGravity(Gravity.START | Gravity.CENTER_VERTICAL); item.setMinHeight(dp(76)); spaced(devices, item, 8);
         }
     }
-    @Override protected void onStart() { super.onStart(); foreground = true; if (client == null) startDiscovery(); else if (direct && screenAllowed) client.requestScreen(true); }
+    @Override protected void onStart() { super.onStart(); foreground = true; if (filePanel != null) filePanel.foreground(true); if (client == null) startDiscovery(); else if (direct && screenAllowed) client.requestScreen(true); }
     @Override protected void onStop() {
         foreground = false; stopDiscovery(); surface.cancelGesture(); resetDrag(); stopFrames();
+        if (filePanel != null) filePanel.foreground(false);
         if (client != null) { client.requestScreen(false); client.leave(); }
         super.onStop();
     }
-    @Override protected void onDestroy() { destroyed = true; stopDiscovery(); if (client != null) client.close(); client = null; stopFrames(); decoder.shutdownNow(); super.onDestroy(); }
+    @Override protected void onDestroy() { destroyed = true; stopDiscovery(); if (client != null) client.close(); client = null; stopFrames(); if (filePanel != null) filePanel.destroy(); decoder.shutdownNow(); super.onDestroy(); }
     // API 33+ uses the native predictive-back callback registered above; this is the API 26–32 fallback.
     @android.annotation.SuppressLint("GestureBackNavigation")
     @Override public void onBackPressed() { handleBack(); }
     private void handleBack() {
+        if (keyboardVisible) { setKeyboardVisible(false); return; }
         if (client == null) { finish(); return; }
         new AlertDialog.Builder(this).setMessage("Ngắt kết nối với máy tính?").setPositiveButton("Ngắt kết nối", (dialog, which) -> disconnect()).setNegativeButton("Tiếp tục", null).show();
     }
@@ -324,5 +362,9 @@ public final class MainActivity extends Activity {
     private void spaced(LinearLayout parent, View child, int margin) { spaced(parent, child, margin, new LinearLayout.LayoutParams(-1, -2)); }
     private void spaced(LinearLayout parent, View child, int margin, LinearLayout.LayoutParams params) { params.topMargin = dp(margin); parent.addView(child, params); }
     private int dp(float value) { return Math.round(value * getResources().getDisplayMetrics().density); }
+    private String androidVersion() {
+        try { String version = getPackageManager().getPackageInfo(getPackageName(), 0).versionName; return version == null ? "Android" : "Android " + version; }
+        catch (android.content.pm.PackageManager.NameNotFoundException ignored) { return "Android"; }
+    }
     private void toast(String message) { Toast.makeText(this, message, Toast.LENGTH_LONG).show(); }
 }

@@ -11,6 +11,7 @@ import java.util.concurrent.atomic.AtomicReference;
 /** Run by scripts/test-android-interop.ps1 against the actual C# transport, never a LAN host. */
 public final class DesktopInteropProbe {
     public static void main(String[] args) throws Exception {
+        if (args.length == 2 && args[0].startsWith("files-")) { FileInteropProbe.run(args[0].substring(6), args[1]); return; }
         if (args.length != 2 || !args[0].equals("device") && !args[0].equals("code")) throw new IllegalArgumentException("Choose device or code.");
         PairingCode pairing = PairingCode.parse(args[1]);
         if (!pairing.address.equals("127.0.0.1")) throw new IllegalArgumentException("This test permits loopback only.");

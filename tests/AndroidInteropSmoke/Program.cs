@@ -3,6 +3,7 @@ using LanBridge;
 
 // This executable intentionally links only the protocol. It cannot capture a screen,
 // install hooks, inject input or discover the user's LAN. The server binds 127.0.0.1:0.
+if (args.Length == 1 && args[0] is "files-device" or "files-code") { await FileProtocolChecks.RunAsync(args[0][6..]); return; }
 if (args.Length != 1 || args[0] is not ("device" or "code"))
     throw new ArgumentException("Choose the device or code loopback test.");
 var done = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);

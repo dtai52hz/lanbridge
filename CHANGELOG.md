@@ -1,3 +1,10 @@
+# Android 0.1.0-preview.2 — Bàn rê, bàn phím và file hai chiều
+
+- Nhấn giữ tại chỗ trên bàn rê để bấm chuột phải một lần, chạm nhanh bấm trái, vuốt hai ngón để cuộn; hủy giữ khi rê, đổi chế độ, mất quyền hoặc thêm ngón tay.
+- Bàn phím có nút mở/ẩn riêng, gửi Unicode tiếng Việt đã ghép dấu; phím đặc biệt và phím tắt trong bảng riêng để bàn rê có thêm chỗ.
+- Gửi/nhận file thủ công qua giao thức máy tính hiện có: đọc/ghi theo khối, SHA-256, tiến trình/hủy, quyền truyền file và xác nhận nhận. Android dùng trình chọn tài liệu, nhận vào vùng riêng rồi Lưu thành nơi người dùng chọn, không cấp quyền toàn bộ bộ nhớ.
+- APK giữ khóa ký và tăng versionCode để cài cập nhật trên preview.1. Các gói máy tính giữ nguyên phiên bản; bản APK có tag nguồn riêng và cùng trang tải chung.
+
 # Windows 0.7.4 — Chặn lọt phím/chuột trên máy A
 
 - Trong lúc A điều khiển B, chặn các sự kiện phím/chuột giả lập từ phần mềm khác tại A, không gửi lại chúng lần hai sang B. Giữ các thao tác có dấu nhận diện LanBridge để nhả phím và đưa con trỏ về đúng vị trí.

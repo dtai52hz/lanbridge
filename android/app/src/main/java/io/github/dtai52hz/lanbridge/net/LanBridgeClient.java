@@ -19,6 +19,7 @@ import java.util.UUID;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.CompletableFuture;
 import javax.net.ssl.SSLContext;
 import javax.net.ssl.SSLParameters;
 import javax.net.ssl.SSLSocket;
@@ -40,6 +41,7 @@ public final class LanBridgeClient implements AutoCloseable {
         default void onPermissions(boolean inputAllowed) { }
         default void onScreenPermission(boolean allowed) { }
         default void onScreenCapability(boolean supported) { }
+        default void onFilesPermission(boolean allowed) { }
         default void onError(String message) { }
         /** Exactly once, including a cancelled connection attempt. Null means a local close. */
         default void onClosed(String reason) { }
@@ -50,10 +52,11 @@ public final class LanBridgeClient implements AutoCloseable {
     private final Object gate = new Object();
     private final Listener listener;
     private final OutboundQueue outbound = new OutboundQueue(128);
+    private final FileTransferClient files;
     private Socket socket;
     private ScheduledExecutorService heartbeat;
     private boolean started, closed, connected, hello, inputAllowed, entered;
-    private boolean screenCapable, screenAllowed, screenRequested;
+    private boolean screenCapable, screenAllowed, screenRequested, filesAllowed;
     private int pointerX = 32768, pointerY = 32768;
     private volatile long lastReceive;
     private String localName;
@@ -61,7 +64,17 @@ public final class LanBridgeClient implements AutoCloseable {
     public LanBridgeClient(Listener listener) {
         if (listener == null) throw new IllegalArgumentException("Thiếu bộ nhận trạng thái.");
         this.listener = listener;
+        files = new FileTransferClient((packet, bulk) -> {
+            synchronized (gate) {
+                if (closed || !connected || !hello) {
+                    CompletableFuture<Void> rejected = new CompletableFuture<>();
+                    rejected.completeExceptionally(new IOException("Chưa kết nối với máy tính.")); return rejected;
+                }
+                return outbound.offerAwaited(packet, bulk);
+            }
+        });
     }
+    public FileTransferClient files() { return files; }
 
     public void connectDevice(Device device, String name) {
         if (device == null) throw new IllegalArgumentException("Chưa chọn máy tính.");
@@ -219,14 +232,20 @@ public final class LanBridgeClient implements AutoCloseable {
             if (permissions == null) throw new IOException("Máy tính gửi quyền không hợp lệ.");
             boolean canInput = Boolean.TRUE.equals(permissions.opt("input"));
             boolean canView = Boolean.TRUE.equals(permissions.opt("screenViewing"));
+            boolean canFiles = Boolean.TRUE.equals(permissions.opt("files"));
             synchronized (gate) {
                 if (closed) return;
-                inputAllowed = canInput; screenAllowed = canView;
+                inputAllowed = canInput; screenAllowed = canView; filesAllowed = canFiles;
                 if (!canInput) { entered = false; outbound.discardInput(); }
                 if (!canView) screenRequested = false;
             }
+            files.setRemoteAllowed(canFiles);
             notifyOpen(() -> listener.onPermissions(canInput));
             notifyOpen(() -> listener.onScreenPermission(canView));
+            notifyOpen(() -> listener.onFilesPermission(canFiles));
+        } else if (type.startsWith("file-")) {
+            files.handle(packet);
+            return;
         } else if ("leave".equals(type)) {
             synchronized (gate) { entered = false; outbound.discardInput(); }
         } else if ("screen-frame".equals(type)) {
@@ -249,9 +268,16 @@ public final class LanBridgeClient implements AutoCloseable {
 
     private void writeLoop(OutputStream stream) {
         try {
-            JSONObject packet;
-            while ((packet = outbound.take()) != null) {
-                stream.write(Wire.frame(packet)); stream.flush();
+            OutboundQueue.Item item;
+            while ((item = outbound.takeItem()) != null) {
+                if (item.completion != null && item.completion.isCancelled()) continue;
+                try {
+                    stream.write(Wire.frame(item.packet)); stream.flush();
+                    if (item.completion != null) item.completion.complete(null);
+                } catch (Exception error) {
+                    if (item.completion != null) item.completion.completeExceptionally(error);
+                    throw error;
+                }
             }
         } catch (InterruptedException e) { Thread.currentThread().interrupt(); fail("Phiên điều khiển đã dừng."); }
         catch (Exception e) { fail(message(e, "Không thể gửi dữ liệu đến máy tính.")); }
@@ -368,11 +394,12 @@ public final class LanBridgeClient implements AutoCloseable {
         Socket closeSocket; ScheduledExecutorService closeHeartbeat;
         synchronized (gate) {
             if (closed) return;
-            closed = true; connected = false; inputAllowed = false; entered = false;
+            closed = true; connected = false; inputAllowed = false; entered = false; filesAllowed = false;
             screenRequested = false; screenAllowed = false;
             closeSocket = socket; socket = null; closeHeartbeat = heartbeat; heartbeat = null;
             outbound.close();
         }
+        files.close();
         if (closeHeartbeat != null) closeHeartbeat.shutdownNow();
         if (closeSocket != null) try { closeSocket.close(); } catch (IOException ignored) { }
         if (error) safely(() -> listener.onError(reason));
